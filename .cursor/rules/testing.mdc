@@ -1,0 +1,47 @@
+---
+description: Test conventions for backend/tests/
+globs: backend/tests/**/*.py
+alwaysApply: false
+---
+
+# Test conventions
+
+## No network, no real data
+
+All tests use **deterministic synthetic OHLCV** fixtures from `conftest.py`.
+Never hit yfinance or any external service from a test. If you need a new
+shape of price series, add a builder to `conftest.py` (existing helpers:
+`steady_uptrend`, `mean_reverting`, `breakout_then_pullback`, etc.).
+
+## Test scope per file
+
+| File | Covers |
+| --- | --- |
+| `test_indicators.py` | EMA / RSI / MACD / ATR / ADX / Bollinger numerics |
+| `test_signals.py` | 9 categories + score / confidence / trade plan |
+| `test_repository.py` | DAO upserts, idempotency |
+| `test_pipeline_no_network.py` | Pipeline orchestration with stubbed fetcher |
+| `test_paper_decision.py` | Filter rules, ranking, skip reasons |
+| `test_paper_sizing.py` | Quantity formula, adjustments, rejections |
+| `test_paper_simulator.py` | Entry / SL / T1 / T2 / trailing / same-candle policies |
+| `test_paper_performance.py` | Aggregate metrics, equity curve, drawdown |
+
+## Style
+
+- Prefer pure-function tests over integration where possible.
+- Use `pytest` parametrize for table-driven cases (multiple confidences,
+  ATR%, setup types, etc.).
+- Assert on **specific** values, not "is not None". The whole point of
+  deterministic synthetic data is reproducibility.
+- When testing the simulator, assert on the **stream of `SimEvent`s** the
+  pure function returns — don't go through `service.simulate_day` for
+  unit tests.
+
+## Run
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Add new tests in the right file; don't create a parallel `test_*_v2.py`.

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+.env
+.cache/
+.pytest_cache/
+
+# DB / data
+*.db
+*.sqlite
+*.sqlite3
+yfinance.cache
+
+# OHLCV CSV cache - regenerable; comment out if you want to commit historical archives
+backend/data/ohlcv/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.local
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

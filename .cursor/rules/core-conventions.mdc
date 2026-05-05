@@ -1,0 +1,49 @@
+---
+description: Core conventions for the Nifty 50 AI Stock Screener + Paper Trading repo
+alwaysApply: true
+---
+
+# Core conventions
+
+Read [`AGENTS.md`](mdc:AGENTS.md) and [`PROJECT_MAP.md`](mdc:PROJECT_MAP.md)
+before making non-trivial edits. They are the canonical source of truth
+about layout and intent.
+
+## Hard rules — do NOT violate
+
+- **Paper trading is simulation only.** Never add a real broker SDK or live
+  order placement code.
+- Every signal/trade plan has a stop-loss / invalidation. ORM enforces it
+  (`stop_loss = Column(Float, nullable=False)` on `paper_positions`).
+- User-facing AI output ends with: *"Research and decision-support only.
+  Not financial advice."* — keep this verbatim.
+- Backtests must not have look-ahead. Slice CSV with `df[: as_of]` then
+  recompute indicators on that slice.
+
+## Comment style
+
+```python
+# ❌ BAD — narrates what the code does
+# Loop over signals and apply the decision engine
+for signal in signals:
+    engine.evaluate(signal)
+
+# ✅ GOOD — explains WHY (a non-obvious constraint)
+# Skip pre-aggregation: ranking depends on per-signal automation_score
+# which is only finalised after sizing.
+for signal in signals:
+    engine.evaluate(signal)
+```
+
+## After substantive edits
+
+- Backend: `cd backend && .\.venv\Scripts\python.exe -m pytest -q`
+- Frontend: `cd frontend && npx tsc --noEmit && npm run build`
+- Use the `ReadLints` tool on touched files.
+
+## Don't add
+
+- New top-level files unless absolutely necessary.
+- New dependencies without clear justification.
+- Comments that just translate code into English.
+- Bypass flags for the kill-switch, position-sizing rejections, or stop-loss.

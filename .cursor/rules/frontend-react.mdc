@@ -1,0 +1,60 @@
+---
+description: Frontend (React + Vite + Tailwind + TanStack Query) conventions
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Frontend conventions
+
+## Stack & imports
+
+- React 18 functional components + hooks. No class components.
+- Path alias `@` → `frontend/src` (see `vite.config.ts`).
+- API calls go through `frontend/src/api/client.ts`
+  (`screenerApi`, `stocksApi`, `paperApi`). DO NOT call axios directly
+  inside components.
+
+## Styling
+
+Use the design tokens from `tailwind.config.ts`:
+
+- Surface: `bg`, `bg-surface`, `bg-elevated`
+- Text: `fg`, `fg-muted`, `fg-subtle`
+- Borders: `border`, `border-strong`
+- Accents: `accent-{green,red,amber,blue,violet,cyan}`
+
+Reusable component classes live in `frontend/src/index.css`:
+`.card`, `.badge`, `.badge-{tone}`, `.btn`, `.btn-primary`, `.input`,
+`.chip`, `.chip-active`, `.num` (tabular numerals).
+
+Do NOT introduce raw hex colours in JSX.
+
+## Numbers
+
+Always format via `frontend/src/lib/format.ts`:
+
+```tsx
+import { fmt } from '@/lib/format';
+
+<td className="num">{fmt.inr(price)}</td>      // ✅
+<td>₹{price.toFixed(2)}</td>                   // ❌
+```
+
+## Server state
+
+- TanStack Query 5 with **stable** query keys: `["paper-status"]`,
+  `["paper-positions-open"]`, `["screener-prices", symbols.join(',')]`, …
+- Live polling: see `Dashboard.tsx`/`Screener.tsx` for the
+  `refetchInterval` + countdown pattern.
+- Mutations: `queryClient.invalidateQueries({ queryKey: [...] })` — never
+  manually mutate cache.
+
+## Routes
+
+`/`, `/screener`, `/paper-trading`, `/stock/:symbol` — defined in `App.tsx`.
+Add new routes there and add a NavLink in `components/Layout.tsx`.
+
+## Type-check
+
+Run `npx tsc --noEmit` after edits; `npm run build` before claiming a
+change is done. Strict mode is enabled.

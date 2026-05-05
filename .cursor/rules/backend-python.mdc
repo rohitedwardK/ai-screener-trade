@@ -1,0 +1,48 @@
+---
+description: Backend (FastAPI / SQLAlchemy / pandas) conventions
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend Python conventions
+
+## Module layering
+
+```
+analysis/* → pure, no DB / network. Used by signals.py, paper/*.
+data/*     → yfinance + CSV cache + SQLAlchemy DAOs.
+core/*     → orchestration (pipeline, scheduler, universe).
+ai/*       → LLM providers (template / ollama / openai).
+api/*      → FastAPI routers — thin, delegate to core or paper.service.
+paper/*    → paper-trading layer; pure modules + service/ledger/positions.
+```
+
+API routers must NOT call yfinance directly; route via `core/pipeline.py`
+or `data/fetcher.py`.
+
+## Indicators & analysis
+
+Indicators are **hand-rolled** in `analysis/indicators.py` for deterministic
+test output. Do not call `pandas-ta` from new code; extend the existing
+function set if you need a new indicator and add a unit test.
+
+## ORM & schemas
+
+- New tables → add to `models/orm.py` or `models/paper_orm.py` using the
+  shared `Base`. `init_db()` calls `Base.metadata.create_all` and already
+  imports `paper_orm`, so no extra wiring.
+- Pydantic v2: use `model_config = ConfigDict(from_attributes=True)` for
+  ORM → JSON. See `models/paper_schemas.py`.
+- Enum-like fields stay as `str` columns; whitelist values in the schema.
+
+## Concurrency / scheduling
+
+- `yf_client.pace()` enforces app-layer pacing for yfinance — keep it.
+- `core/scheduler.py` uses APScheduler; jobs must be idempotent because
+  `/admin/refresh-async` can run them on demand too.
+
+## Style
+
+- Type hints on all public functions.
+- Prefer `dataclass(frozen=True)` for value objects (see `paper/sizing.py`).
+- Don't catch `Exception` without re-raising or logging structured context.

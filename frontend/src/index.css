@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(59, 130, 246, 0.06), transparent 60%),
+      radial-gradient(800px 400px at -10% 110%, rgba(139, 92, 246, 0.05), transparent 60%),
+      #0b0e14;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0b0e14;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #232a36;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2e3848;
+  }
+}
+
+@layer components {
+  .num {
+    @apply font-mono tabular-nums;
+  }
+
+  .card {
+    @apply rounded-xl border border-border bg-bg-surface shadow-card;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium;
+  }
+
+  .badge-green {
+    @apply bg-accent-green/10 border-accent-green/30 text-accent-green;
+  }
+  .badge-red {
+    @apply bg-accent-red/10 border-accent-red/30 text-accent-red;
+  }
+  .badge-amber {
+    @apply bg-accent-amber/10 border-accent-amber/30 text-accent-amber;
+  }
+  .badge-blue {
+    @apply bg-accent-blue/10 border-accent-blue/30 text-accent-blue;
+  }
+  .badge-violet {
+    @apply bg-accent-violet/10 border-accent-violet/30 text-accent-violet;
+  }
+  .badge-cyan {
+    @apply bg-accent-cyan/10 border-accent-cyan/30 text-accent-cyan;
+  }
+  .badge-muted {
+    @apply bg-bg-elevated text-fg-muted;
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-md border border-border bg-bg-surface px-3 py-1.5 text-sm font-medium text-fg hover:border-border-strong hover:bg-bg-elevated transition;
+  }
+
+  .btn-primary {
+    @apply border-accent-blue/40 bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25;
+  }
+
+  .input {
+    @apply rounded-md border border-border bg-bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-fg-subtle focus:border-accent-blue/60 focus:outline-none;
+  }
+
+  .chip {
+    @apply rounded-full border border-border bg-bg-surface px-3 py-1 text-xs text-fg-muted hover:border-border-strong cursor-pointer;
+  }
+  .chip-active {
+    @apply border-accent-blue/50 bg-accent-blue/15 text-accent-blue;
+  }
+}
