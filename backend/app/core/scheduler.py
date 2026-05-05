@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..config import get_settings
 from ..db import SessionLocal
+from ..live_analysis import config as live_cfg, service as live_service
 from ..paper import config as paper_cfg, service as paper_service
 from ..paper_index import (
     config as paper_index_cfg,
@@ -80,6 +81,38 @@ def run_paper_index_live_tick() -> None:
         "paper-index live-tick: priced=%d exits=%d realized_today=%.2f status=%s",
         result.symbols_priced, result.exits_triggered,
         result.realized_pnl_today, result.bot_status,
+    )
+
+
+def run_live_analysis_tick() -> None:
+    """Scheduler entrypoint: poll Upstox (or yfinance fallback) and advance
+    Live Analysis observation windows.
+
+    Idempotent and exception-safe. Short-circuits when:
+        - we are outside the NSE regular session,
+        - or Live Analysis Mode is OFF in `live_analysis_config.mode`.
+    """
+    if not live_service.is_market_open():
+        return
+    with SessionLocal() as db:
+        try:
+            mode = live_cfg.get_mode(db)
+        except Exception:
+            log.exception("live-analysis tick: failed to read mode; skipping")
+            return
+        if mode != live_cfg.MODE_LIVE:
+            return
+        try:
+            result = live_service.run_tick(db)
+        except Exception:
+            log.exception("live-analysis tick: run_tick failed")
+            return
+    log.info(
+        "live-analysis tick: regime=%s priced=%d active=%d started=%d "
+        "decisions=%d cooldowns_released=%d",
+        result.regime, result.symbols_priced, result.observations_active,
+        result.observations_started, result.decisions_emitted,
+        result.cooldowns_released,
     )
 
 
@@ -224,11 +257,31 @@ def start_scheduler() -> BackgroundScheduler | None:
         coalesce=True,
         max_instances=1,
     )
+    # Live Analysis tick: every poll_interval_min (default 3) Mon-Fri
+    # 09-15 IST. The job short-circuits when mode != LIVE, so this cron
+    # just guarantees the wake-up. Cadence is fixed at the cron level so
+    # APScheduler can plan deterministically; in-DB `poll_interval_min`
+    # additionally throttles per-sample appends inside the engine.
+    sched.add_job(
+        run_live_analysis_tick,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute=f"*/{max(int(settings.LIVE_ANALYSIS_POLL_MIN), 1)}",
+        ),
+        id="intraday-live-analysis-tick",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     sched.start()
     _scheduler = sched
     log.info(
-        "Scheduler started: daily-refresh @ %02d:%02d IST + index intraday */5 + paper live-tick */1 + paper-index live-tick */1 + paper auto-selection @ 09:16 IST (Mon-Fri)",
+        "Scheduler started: daily-refresh @ %02d:%02d IST + index intraday */5 "
+        "+ paper live-tick */1 + paper-index live-tick */1 + paper auto-selection "
+        "@ 09:16 IST + live-analysis */%d (Mon-Fri)",
         settings.REFRESH_CRON_HOUR, settings.REFRESH_CRON_MINUTE,
+        max(int(settings.LIVE_ANALYSIS_POLL_MIN), 1),
     )
     return sched
 

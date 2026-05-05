@@ -1,13 +1,41 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  Loader2,
+  RefreshCw,
+  Search,
+  Activity,
+  History,
+} from "lucide-react";
+import { useAppMode, type AppMode } from "@/lib/appMode";
 
+/**
+ * Top-level chrome: header, mode toggle, nav, search, footer.
+ *
+ * Mode toggle: switching to LIVE flips `<html class="dark">` off (light
+ * palette) and tells the backend scheduler to start running the
+ * `intraday-live-analysis-tick` job. Switching back restores the dark
+ * theme + full historical navigation.
+ */
 export function Layout() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [symbolQuery, setSymbolQuery] = useState("");
+
+  const mode = useAppMode((s) => s.mode);
+  const setMode = useAppMode((s) => s.setMode);
+  const syncing = useAppMode((s) => s.syncing);
+  const syncError = useAppMode((s) => s.syncError);
+  const hydrate = useAppMode((s) => s.hydrateFromBackend);
+
+  // Reconcile local persisted mode with whatever the backend believes - if
+  // another operator already flipped it, we follow.
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
 
   const refreshMut = useMutation({
     mutationFn: () => api.refresh(),
@@ -31,71 +59,29 @@ export function Layout() {
         <div className="mx-auto max-w-[1400px] px-6 h-14 flex items-center gap-6">
           <NavLink to="/" className="font-semibold tracking-tight text-fg">
             <span className="text-accent-blue">AI</span> Stock Screener
-            <span className="ml-2 text-xs font-normal text-fg-muted">Nifty 50</span>
+            <span className="ml-2 text-xs font-normal text-fg-muted">
+              {mode === "LIVE" ? "Live · Nifty 50" : "Nifty 50"}
+            </span>
           </NavLink>
 
+          <ModeToggle mode={mode} onChange={setMode} disabled={syncing} />
+
           <nav className="flex items-center gap-1 text-sm">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md ${
-                  isActive
-                    ? "bg-bg-elevated text-fg"
-                    : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
-                }`
-              }
-            >
-              Dashboard
-            </NavLink>
-            <NavLink
-              to="/screener"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md ${
-                  isActive
-                    ? "bg-bg-elevated text-fg"
-                    : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
-                }`
-              }
-            >
-              Screener
-            </NavLink>
-            <NavLink
-              to="/paper-trading"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md ${
-                  isActive
-                    ? "bg-bg-elevated text-fg"
-                    : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
-                }`
-              }
-            >
-              Paper Trading
-            </NavLink>
-            <NavLink
-              to="/indices"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md ${
-                  isActive
-                    ? "bg-bg-elevated text-fg"
-                    : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
-                }`
-              }
-            >
-              Indices
-            </NavLink>
-            <NavLink
-              to="/paper-index-trading"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md ${
-                  isActive
-                    ? "bg-bg-elevated text-fg"
-                    : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
-                }`
-              }
-            >
-              Index Bot
-            </NavLink>
+            {mode === "LIVE" ? (
+              <>
+                <NavLinkPill to="/live" label="Live Dashboard" />
+                <NavLinkPill to="/indices" label="Indices" />
+                <NavLinkPill to="/paper-index-trading" label="Index Bot" />
+              </>
+            ) : (
+              <>
+                <NavLinkPill to="/" end label="Dashboard" />
+                <NavLinkPill to="/screener" label="Screener" />
+                <NavLinkPill to="/paper-trading" label="Paper Trading" />
+                <NavLinkPill to="/indices" label="Indices" />
+                <NavLinkPill to="/paper-index-trading" label="Index Bot" />
+              </>
+            )}
           </nav>
 
           <form onSubmit={onSearch} className="ml-auto flex items-center gap-2">
@@ -108,20 +94,22 @@ export function Layout() {
                 className="input pl-8 w-56"
               />
             </div>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => refreshMut.mutate()}
-              disabled={refreshMut.isPending}
-              title="Refresh data (fetches all Nifty 50 from Yahoo)"
-            >
-              {refreshMut.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RefreshCw className="size-4" />
-              )}
-              <span>Refresh</span>
-            </button>
+            {mode === "HISTORICAL" && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => refreshMut.mutate()}
+                disabled={refreshMut.isPending}
+                title="Refresh data (fetches all Nifty 50 from Yahoo)"
+              >
+                {refreshMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                <span>Refresh</span>
+              </button>
+            )}
           </form>
         </div>
         {refreshMut.isPending && (
@@ -132,6 +120,12 @@ export function Layout() {
         {refreshMut.isError && (
           <div className="border-t border-border bg-accent-red/5 px-6 py-1.5 text-xs text-accent-red">
             Refresh failed. Check the backend logs.
+          </div>
+        )}
+        {syncError && (
+          <div className="border-t border-border bg-accent-amber/5 px-6 py-1.5 text-xs text-accent-amber">
+            Mode toggle could not reach the backend ({syncError}). The UI is in {mode}{" "}
+            mode but the scheduler may not be in sync.
           </div>
         )}
       </header>
@@ -151,5 +145,101 @@ export function Layout() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function NavLinkPill({
+  to,
+  label,
+  end,
+}: {
+  to: string;
+  label: string;
+  end?: boolean;
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `px-3 py-1.5 rounded-md ${
+          isActive
+            ? "bg-bg-elevated text-fg"
+            : "text-fg-muted hover:text-fg hover:bg-bg-elevated"
+        }`
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
+
+function ModeToggle({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: AppMode;
+  onChange: (next: AppMode) => Promise<void>;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      className="inline-flex rounded-md border border-border bg-bg-surface p-0.5 text-xs"
+      role="group"
+      aria-label="Application mode"
+    >
+      <ModeButton
+        active={mode === "HISTORICAL"}
+        disabled={disabled}
+        onClick={() => onChange("HISTORICAL")}
+        icon={<History className="size-3.5" />}
+        label="Historical"
+      />
+      <ModeButton
+        active={mode === "LIVE"}
+        disabled={disabled}
+        onClick={() => onChange("LIVE")}
+        icon={<Activity className="size-3.5" />}
+        label="Live"
+        variant="live"
+      />
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  disabled,
+  onClick,
+  icon,
+  label,
+  variant,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  variant?: "live";
+}) {
+  const activeClasses =
+    variant === "live"
+      ? "bg-accent-green/15 text-accent-green border-accent-green/30"
+      : "bg-bg-elevated text-fg border-border-strong";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] border transition ${
+        active
+          ? activeClasses
+          : "border-transparent text-fg-muted hover:text-fg hover:bg-bg-elevated"
+      } disabled:opacity-50`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }

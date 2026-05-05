@@ -891,3 +891,124 @@ export interface PaperIndexReset {
   deleted_daily: number;
   message: string;
 }
+
+// =====================================================
+// Live Analysis Mode
+// =====================================================
+export type LiveAppMode = "HISTORICAL" | "LIVE";
+
+export interface LiveModeOut {
+  mode: LiveAppMode;
+  market_open: boolean;
+}
+
+export interface LiveWeights {
+  w1_z: number;
+  w2_slope: number;
+  w3_vwap: number;
+  w4_ema20: number;
+  w5_rvol: number;
+  w6_body: number;
+  w7_rsi_penalty: number;
+}
+
+export interface LiveAnalysisConfig {
+  mode: LiveAppMode;
+  poll_interval_min: number;
+  observation_samples: number;
+  top_k_movers: number;
+  cooldown_min: number;
+  decision_threshold: number;
+  confidence_threshold: number;
+  regime_risk_on_z: number;
+  regime_risk_off_z: number;
+  weights: LiveWeights;
+}
+
+export interface LiveMover {
+  symbol: string;
+  last: number;
+  pct_change: number;
+  rvol: number;
+  rank: number;
+  score: number;
+}
+
+export interface LiveMarketSnapshot {
+  id: number;
+  ts: string | null;
+  regime: "RISK_ON" | "NEUTRAL" | "RISK_OFF" | string;
+  nifty_last: number | null;
+  nifty_z: number | null;
+  nifty_slope: number | null;
+  nifty_vwap_dev: number | null;
+  top_movers: LiveMover[];
+  counters: Record<string, number | string> | null;
+}
+
+export interface LiveSample {
+  ts: string;
+  price: number;
+  volume: number;
+}
+
+export type LiveObservationStatus =
+  | "OBSERVING"
+  | "COOLDOWN"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "DECIDED";
+
+export interface LiveObservation {
+  id: number;
+  symbol: string;
+  status: LiveObservationStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  sample_count: number;
+  samples: LiveSample[];
+  vwap: number | null;
+  rvol: number | null;
+  atr_3m: number | null;
+  rsi_3m: number | null;
+  ema20_3m: number | null;
+  note: string | null;
+}
+
+export interface LiveDecision {
+  id: number;
+  observation_id: number;
+  symbol: string;
+  ts: string | null;
+  direction: "LONG" | "SHORT" | "HOLD" | string;
+  confidence: number;
+  long_raw: number;
+  short_raw: number;
+  invalidation: number | null;
+  regime: string | null;
+  factors: Record<string, number>;
+}
+
+export interface LiveDashboard {
+  mode: LiveAppMode;
+  market_open: boolean;
+  config: LiveAnalysisConfig;
+  market_snapshot: LiveMarketSnapshot | null;
+  active_observations: LiveObservation[];
+  recent_decisions: LiveDecision[];
+  disclaimer: string;
+}
+
+export interface LiveTickOut {
+  processed_at: string;
+  mode: LiveAppMode;
+  market_open: boolean;
+  regime: string;
+  symbols_priced: number;
+  top_movers_count: number;
+  observations_active: number;
+  observations_started: number;
+  decisions_emitted: number;
+  cooldowns_released: number;
+  note: string;
+}

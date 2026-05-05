@@ -41,6 +41,14 @@ import type {
   ScreenerRow,
   Stock,
   StockDetail,
+  LiveAnalysisConfig,
+  LiveAppMode,
+  LiveDashboard,
+  LiveDecision,
+  LiveModeOut,
+  LiveObservation,
+  LiveTickOut,
+  LiveWeights,
 } from "./types";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -296,4 +304,43 @@ export const paperIndexApi = {
         params: { confirm: "YES" },
       })
       .then((r) => r.data),
+};
+
+// =====================================================
+// Live Analysis API
+// =====================================================
+const liveBase = "/v1/live-analysis";
+
+export const liveApi = {
+  getMode: () => http.get<LiveModeOut>(`${liveBase}/mode`).then((r) => r.data),
+  setMode: (mode: LiveAppMode) =>
+    http.post<LiveModeOut>(`${liveBase}/mode`, { mode }).then((r) => r.data),
+
+  getConfig: () =>
+    http.get<LiveAnalysisConfig>(`${liveBase}/config`).then((r) => r.data),
+  updateConfig: (
+    patch: Partial<Omit<LiveAnalysisConfig, "weights">> & {
+      weights?: Partial<LiveWeights>;
+    },
+  ) =>
+    http
+      .post<LiveAnalysisConfig>(`${liveBase}/config`, patch)
+      .then((r) => r.data),
+
+  getDashboard: () =>
+    http.get<LiveDashboard>(`${liveBase}/dashboard`).then((r) => r.data),
+
+  getDecisions: (limit = 50) =>
+    http
+      .get<LiveDecision[]>(`${liveBase}/decisions`, { params: { limit } })
+      .then((r) => r.data),
+
+  getObservations: (only_active = true) =>
+    http
+      .get<LiveObservation[]>(`${liveBase}/observations`, {
+        params: { only_active },
+      })
+      .then((r) => r.data),
+
+  tick: () => http.post<LiveTickOut>(`${liveBase}/tick`).then((r) => r.data),
 };

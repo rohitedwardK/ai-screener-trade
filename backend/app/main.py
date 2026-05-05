@@ -11,6 +11,7 @@ from .api import (
     admin,
     explain,
     indices,
+    live_analysis,
     paper_index_trading,
     paper_trading,
     screener,
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(paper_trading.router)
     app.include_router(indices.router)
     app.include_router(paper_index_trading.router)
+    app.include_router(live_analysis.router)
 
     @app.get("/")
     def root() -> dict:

@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # Live Analysis Mode (Upstox-backed real-time)
+    UPSTOX_API_KEY: str = ""
+    UPSTOX_ACCESS_TOKEN: str = ""
+    UPSTOX_BASE_URL: str = "https://api.upstox.com/v2"
+    LIVE_ANALYSIS_ENABLED: bool = True
+    LIVE_ANALYSIS_POLL_MIN: int = 3
+    LIVE_ANALYSIS_OBS_SAMPLES: int = 6
+    LIVE_ANALYSIS_TOP_K: int = 8
+    LIVE_ANALYSIS_COOLDOWN_MIN: int = 30
+
     @property
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

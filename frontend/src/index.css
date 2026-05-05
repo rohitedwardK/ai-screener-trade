@@ -2,6 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/* -------------------------------------------------------------------------
+ * Theme tokens
+ *
+ * `:root`  — Light palette used in Live Analysis Mode.
+ * `.dark`  — Dark palette (default) used in Historical Mode.
+ *
+ * Tailwind tokens (configured in tailwind.config.ts) consume these via
+ * `rgb(var(--color-x) / <alpha-value>)` so opacity utilities like
+ * `bg-accent-blue/15` keep working without per-mode overrides.
+ *
+ * Format: each variable is an `R G B` triplet (no `rgb(...)` wrapper) so
+ * Tailwind's `<alpha-value>` substitution composes correctly.
+ * ----------------------------------------------------------------------- */
+:root {
+  /* Light theme - Live Analysis Mode */
+  --color-bg:           248 250 252;  /* slate-50 */
+  --color-bg-surface:   255 255 255;  /* white */
+  --color-bg-elevated:  241 245 249;  /* slate-100 */
+  --color-border:       226 232 240;  /* slate-200 */
+  --color-border-strong:203 213 225;  /* slate-300 */
+  --color-fg:            15  23  42;  /* slate-900 */
+  --color-fg-muted:      71  85 105;  /* slate-600 */
+  --color-fg-subtle:    148 163 184;  /* slate-400 */
+  --color-accent-green:   5 150 105;  /* emerald-600 */
+  --color-accent-red:   220  38  38;  /* red-600 */
+  --color-accent-amber: 217 119   6;  /* amber-600 */
+  --color-accent-blue:   37  99 235;  /* blue-600 */
+  --color-accent-violet:124  58 237;  /* violet-600 */
+  --color-accent-cyan:    8 145 178;  /* cyan-600 */
+  --color-card-inset:     0   0   0;
+  --bg-radial-1:        rgba(37, 99, 235, 0.05);
+  --bg-radial-2:        rgba(124, 58, 237, 0.04);
+  --bg-base:            #f8fafc;
+  --scrollbar-track:    #f8fafc;
+  --scrollbar-thumb:    #cbd5e1;
+  --scrollbar-thumb-hover:#94a3b8;
+}
+
+.dark {
+  /* Dark theme - Historical Mode (current default) */
+  --color-bg:            11  14  20;  /* #0b0e14 */
+  --color-bg-surface:    17  22  31;  /* #11161f */
+  --color-bg-elevated:   22  28  39;  /* #161c27 */
+  --color-border:        35  42  54;  /* #232a36 */
+  --color-border-strong: 46  56  72;  /* #2e3848 */
+  --color-fg:           230 233 239;  /* #e6e9ef */
+  --color-fg-muted:     139 148 167;  /* #8b94a7 */
+  --color-fg-subtle:     91 100 120;  /* #5b6478 */
+  --color-accent-green:  16 185 129;  /* #10b981 */
+  --color-accent-red:   239  68  68;  /* #ef4444 */
+  --color-accent-amber: 245 158  11;  /* #f59e0b */
+  --color-accent-blue:   59 130 246;  /* #3b82f6 */
+  --color-accent-violet:139  92 246;  /* #8b5cf6 */
+  --color-accent-cyan:    6 182 212;  /* #06b6d4 */
+  --color-card-inset:   255 255 255;
+  --bg-radial-1:        rgba(59, 130, 246, 0.06);
+  --bg-radial-2:        rgba(139, 92, 246, 0.05);
+  --bg-base:            #0b0e14;
+  --scrollbar-track:    #0b0e14;
+  --scrollbar-thumb:    #232a36;
+  --scrollbar-thumb-hover:#2e3848;
+}
+
 @layer base {
   html,
   body,
@@ -11,9 +74,9 @@
 
   body {
     background:
-      radial-gradient(1200px 600px at 80% -10%, rgba(59, 130, 246, 0.06), transparent 60%),
-      radial-gradient(800px 400px at -10% 110%, rgba(139, 92, 246, 0.05), transparent 60%),
-      #0b0e14;
+      radial-gradient(1200px 600px at 80% -10%, var(--bg-radial-1), transparent 60%),
+      radial-gradient(800px 400px at -10% 110%, var(--bg-radial-2), transparent 60%),
+      var(--bg-base);
   }
 
   ::-webkit-scrollbar {
@@ -21,14 +84,14 @@
     height: 10px;
   }
   ::-webkit-scrollbar-track {
-    background: #0b0e14;
+    background: var(--scrollbar-track);
   }
   ::-webkit-scrollbar-thumb {
-    background: #232a36;
+    background: var(--scrollbar-thumb);
     border-radius: 8px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #2e3848;
+    background: var(--scrollbar-thumb-hover);
   }
 }
 
