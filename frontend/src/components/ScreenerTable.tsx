@@ -2,8 +2,12 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "./Badge";
 import { fmt, regimeTone, scoreTone, symbolDisplay } from "@/lib/format";
-import { CATEGORY_TONE } from "@/api/types";
-import type { ScreenerRow } from "@/api/types";
+import {
+  CATEGORY_TONE,
+  LIVE_STATUS_LABEL,
+  LIVE_STATUS_TONE,
+} from "@/api/types";
+import type { LiveVerification, ScreenerRow } from "@/api/types";
 import { ArrowDown, ArrowUp, TrendingDown, TrendingUp } from "lucide-react";
 
 type SortKey =
@@ -20,6 +24,7 @@ const HEADERS: { key: SortKey | null; label: string; align?: "right" }[] = [
   { key: null, label: "Sector" },
   { key: null, label: "Regime" },
   { key: null, label: "Category" },
+  { key: null, label: "Live" },
   { key: "score", label: "Score", align: "right" },
   { key: "confidence", label: "Conf", align: "right" },
   { key: "close", label: "Live / Run close", align: "right" },
@@ -136,6 +141,9 @@ export function ScreenerTable({
                     {r.category.replace(/_/g, " ")}
                   </Badge>
                 </td>
+                <td className="px-3 py-2">
+                  <LiveStatusCell live={r.live} />
+                </td>
                 <td className="px-3 py-2 text-right">
                   <Badge tone={scoreTone(r.score)}>{fmt.num(r.score, 0)}</Badge>
                 </td>
@@ -165,6 +173,42 @@ export function ScreenerTable({
         </table>
       </div>
     </div>
+  );
+}
+
+function LiveStatusCell({ live }: { live: LiveVerification | null }) {
+  if (!live) {
+    return <span className="text-[11px] text-fg-subtle">—</span>;
+  }
+  const label = LIVE_STATUS_LABEL[live.status];
+  const distanceParts: string[] = [];
+  if (live.distance_to_stop_pct != null) {
+    distanceParts.push(`stop ${fmt.pct(live.distance_to_stop_pct, 1)}`);
+  }
+  if (live.distance_to_t1_pct != null) {
+    distanceParts.push(`T1 ${fmt.pct(live.distance_to_t1_pct, 1)}`);
+  }
+  const tooltipLines: string[] = [
+    `Status: ${label}`,
+    `Live close: ${fmt.inr(live.live_close)}`,
+  ];
+  if (live.live_rsi != null) {
+    tooltipLines.push(`Live RSI: ${fmt.num(live.live_rsi, 0)}`);
+  }
+  tooltipLines.push(`Live regime: ${live.live_regime.replace(/_/g, " ")}`);
+  if (live.score_delta != null) {
+    tooltipLines.push(`Score delta: ${fmt.num(live.score_delta, 1)}`);
+  }
+  if (distanceParts.length) {
+    tooltipLines.push(`Distance: ${distanceParts.join(" · ")}`);
+  }
+  if (live.notes.length > 0) {
+    tooltipLines.push(...live.notes);
+  }
+  return (
+    <span title={tooltipLines.join("\n")}>
+      <Badge tone={LIVE_STATUS_TONE[live.status]}>{label}</Badge>
+    </span>
   );
 }
 

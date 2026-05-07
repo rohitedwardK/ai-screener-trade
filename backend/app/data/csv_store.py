@@ -20,15 +20,26 @@ from typing import Optional
 
 import pandas as pd
 
+from ..config import get_settings
+
 log = logging.getLogger(__name__)
 
-# data/ohlcv lives next to the working directory of the backend (where uvicorn runs).
-CSV_DIR = Path("data") / "ohlcv"
-CSV_DIR.mkdir(parents=True, exist_ok=True)
+
+def _csv_dir() -> Path:
+    # Resolved per-call so test fixtures and cloud envs that override
+    # STOCK_DATA_DIR after import still take effect on the next access.
+    p = Path(get_settings().STOCK_DATA_DIR)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+# Backwards-compatible module attribute; downstream callers should prefer
+# csv_path() / list_cached_symbols() which re-resolve from settings.
+CSV_DIR = _csv_dir()
 
 
 def csv_path(symbol: str) -> Path:
-    return CSV_DIR / f"{symbol}.csv"
+    return _csv_dir() / f"{symbol}.csv"
 
 
 def load(symbol: str) -> pd.DataFrame:
@@ -116,4 +127,4 @@ def incremental_start(symbol: str, overlap_days: int = 5) -> Optional[date]:
 
 
 def list_cached_symbols() -> list[str]:
-    return sorted(p.stem for p in CSV_DIR.glob("*.csv"))
+    return sorted(p.stem for p in _csv_dir().glob("*.csv"))

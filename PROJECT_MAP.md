@@ -8,6 +8,7 @@ A directory-by-directory map of the codebase. Pair this with
 ├── PROJECT_MAP.md        ← this file
 ├── README.md             ← user-facing project overview
 ├── START.readme.md       ← manual start guide & troubleshooting
+├── render.yaml           ← Render Blueprint (cloud deploy)
 ├── .cursor/rules/        ← scoped Cursor rules (.mdc)
 ├── backend/              ← FastAPI service (Python 3.12)
 └── frontend/             ← React 18 dashboard (Vite + TS)
@@ -21,11 +22,13 @@ A directory-by-directory map of the codebase. Pair this with
 backend/
 ├── pytest.ini
 ├── requirements.txt
+├── Dockerfile             ← cloud deploy image
+├── .dockerignore
 ├── data/                  ← runtime artifacts (gitignored)
-│   ├── csv/               ← per-symbol stock CSV cache
+│   ├── ohlcv/                     ← per-symbol stock CSV cache
 │   ├── ohlcv-indices/             ← per-index daily OHLCV cache
 │   ├── ohlcv-indices-intraday/    ← per-index intraday cache
-│   └── stock.db           ← SQLite mirror, paper + paper-index state
+│   └── screener.db                ← SQLite mirror
 └── app/
     ├── main.py            ← FastAPI factory + lifespan (router mount, scheduler)
     ├── config.py          ← Pydantic settings (env-driven)
@@ -36,15 +39,18 @@ backend/
     │   ├── universe.py        ← Nifty 50 constituents
     │   ├── index_universe.py  ← Indices (Nifty 50 / Bank Nifty / Sensex) with lot/strike step
     │   ├── pipeline.py        ← Stock refresh orchestration
-    │   └── scheduler.py       ← APScheduler: daily stock + daily index + index intraday */5 + paper live-tick */1 + paper auto-selection @ 09:16 IST (mon-fri)
+    │   ├── index_pipeline.py  ← Daily + intraday index refresh (OHLCV + chain + signals)
+    │   ├── live_verification.py ← Cross-check persisted signals vs live LTPs
+    │   └── scheduler.py       ← APScheduler: daily stock + daily index + index intraday */5 + live-analysis */N + live-verification */15 (mon-fri)
     │
     ├── data/
     │   ├── yf_client.py            ← yfinance wrapper with pacing
+    │   ├── upstox_client.py        ← Upstox v2 quote client (Live mode)
     │   ├── fetcher.py              ← Per-stock fetch
-    │   ├── csv_store.py            ← Stock CSV cache
-    │   ├── live_quotes.py          ← Shared yfinance 1-min live-price cache (TTL 30s)
+    │   ├── csv_store.py            ← Stock CSV cache (env-configurable dir)
+    │   ├── live_quotes.py          ← Shared live-price cache (Upstox primary, yfinance fallback, TTL 30s)
     │   ├── index_fetcher.py        ← Per-index daily + intraday fetch
-    │   ├── index_csv_store.py      ← Index daily/intraday CSV cache
+    │   ├── index_csv_store.py      ← Index daily/intraday CSV cache (env-configurable dirs)
     │   ├── option_chain.py         ← NSE option-chain fetcher (yfinance fallback) + 60s memo cache
     │   ├── repository.py           ← Stock DAO
     │   └── index_repository.py     ← Index DAO (instruments, candles, snapshots, signals, option snapshots)
@@ -57,64 +63,38 @@ backend/
     │   ├── risk.py                   ← ATR%, volume, gap labels
     │   ├── signals.py                ← 9-category stock screener signals
     │   ├── index_signals.py          ← Index trend / breakout / pullback (LONG + SHORT)
-    │   └── option_chain_metrics.py   ← PCR, PCR-vol, max pain (+ distance %), IV skew, bias, strike picker
+    │   ├── option_chain_metrics.py   ← PCR, PCR-vol, max pain (+ distance %), IV skew, bias, strike picker
+    │   └── live_verifier.py          ← Project EOD signals onto live LTPs (CONFIRMED/WEAKENING/...)
     │
     ├── ai/                ← Pluggable explanation layer (template/ollama/openai)
     │
     ├── models/            ← ORM + Pydantic schemas
     │   ├── orm.py                ← Stock, Candle, Snapshot, Signal (stocks)
     │   ├── schemas.py            ← Stock screener DTOs
-    │   ├── paper_orm.py          ← 6 paper_* tables
-    │   ├── paper_schemas.py      ← Paper-stock DTOs
     │   ├── index_orm.py          ← IndexInstrument/Candle/Snapshot/Signal/OptionSnapshot
-    │   ├── paper_index_orm.py    ← 6 paper_index_* tables (option-aware)
-    │   └── index_schemas.py      ← All index + paper-index DTOs (incl. OptionChain*)
+    │   ├── index_schemas.py      ← Index DTOs (incl. OptionChain*)
+    │   └── live_analysis_orm.py  ← Live observation/decision tables
     │
     ├── api/               ← FastAPI routers
     │   ├── screener.py             ← /screener/*
     │   ├── stocks.py               ← /stocks/*
     │   ├── explain.py              ← /explain/*
-    │   ├── admin.py                ← /admin/* (stock refresh + index refresh)
-    │   ├── paper_trading.py        ← /v1/paper-trading/*
+    │   ├── admin.py                ← /admin/* (stock refresh + index refresh + cache diagnostics)
     │   ├── indices.py              ← /indices/* (list, dashboard, detail, history, option-chain)
-    │   └── paper_index_trading.py  ← /v1/paper-index-trading/*
+    │   ├── live_analysis.py        ← /v1/live-analysis/* (mode, config, dashboard, observations, decisions, tick)
+    │   └── live_verification.py    ← /v1/live-verification/* (run, summary, signals)
     │
-    ├── paper/             ← Paper-stock-bot layer
-    │   ├── adapter.py / regime.py / config.py
-    │   ├── decision.py / sizing.py / simulator.py
-    │   ├── live_engine.py ← Pure live-tick evaluator (entry/SL/T1/T2 from one price)
-    │   ├── positions.py / ledger.py / kill_switch.py
-    │   ├── backtest.py / performance.py / journal.py
-    │   └── service.py     ← run_selection / simulate_day / replay / process_live_tick / status
-    │
-    ├── paper_index/       ← Paper-INDEX-bot layer (parallel to paper/)
-    │   ├── adapter.py     ← IndexSignal+Snapshot → IndexScreenerSignal
-    │   ├── regime.py      ← Aggregate index market regime
-    │   ├── config.py      ← PaperIndexBotConfig (max 5/day default, option_moneyness, delta, live_trading_enabled)
-    │   ├── decision.py    ← Filter + rank with chain-bias bonus
-    │   ├── sizing.py      ← Lot-aware option sizing, premium-stop fraction
-    │   ├── simulator.py   ← Spot→premium delta map; STOP/T1/T2/TRAIL/TIME_EXIT events
-    │   ├── live_engine.py ← Pure spot→premium tick evaluator (manages OPEN, never opens new)
-    │   ├── positions.py   ← Position lifecycle, MTM via delta-implied premium
-    │   ├── ledger.py      ← DAO for paper_index_* tables
-    │   ├── kill_switch.py ← Daily limit, loss limit, max open
-    │   ├── performance.py ← Aggregate metrics, equity curve, daily upsert
-    │   ├── journal.py     ← AI/template daily journal
-    │   ├── index_pipeline.py ← Orchestrate daily + intraday refresh (chain → signals)
-    │   └── service.py     ← run_selection / simulate_day / replay / reset / status / process_live_tick
+    ├── live_analysis/     ← Real-time observation engine (read-only)
+    │   ├── config.py / engine.py / service.py / regime.py / scoring.py / observer.py
     │
     └── tests/             ← pytest, deterministic synthetic OHLCV
         ├── conftest.py
         ├── test_indicators.py / test_signals.py / test_regime.py / test_risk.py
-        ├── test_index_pivots.py
-        ├── test_paper_decision.py / test_paper_sizing.py / test_paper_simulator.py / test_paper_performance.py
-        ├── test_paper_live_engine.py
+        ├── test_index_pivots.py / test_index_signals.py
         ├── test_option_chain_metrics.py
-        ├── test_index_signals.py
-        ├── test_paper_index_decision.py
-        ├── test_paper_index_sizing.py
-        ├── test_paper_index_simulator.py
-        └── test_paper_index_live_engine.py
+        ├── test_live_quotes.py / test_live_verifier.py
+        ├── test_live_movers.py / test_live_observer.py
+        ├── test_live_regime.py / test_live_strategy.py
 ```
 
 ### Backend module dependency rules
@@ -123,17 +103,17 @@ backend/
 analysis ──┐
            ├──> signals ──> api/* ──> main
 data ──────┘
-core/pipeline ── orchestrates: data + analysis + repository
-ai/* ── consumed by api/explain and paper/journal only
-paper/* ── orchestrated by api/paper_trading via paper/service
+core/pipeline       ── orchestrates: data + analysis + repository  (stocks)
+core/index_pipeline ── orchestrates: data + analysis + repository  (indices)
+ai/*                ── consumed by api/explain only
+live_analysis/*     ── orchestrated by api/live_analysis via service
 ```
 
 - `analysis/*` has **no** DB or network imports.
-- `paper/{decision,sizing,simulator,kill_switch,performance,backtest}` are
-  pure functions; `paper/{service,ledger,positions,journal,config}` touch
-  the DB.
 - API routers must not call yfinance directly; they go through
-  `core/pipeline.py` or `data/fetcher.py`.
+  `core/pipeline.py`, `core/index_pipeline.py`, or `data/fetcher.py`.
+- Removed in 2026 cleanup: `app/paper/` (stock paper bot) and
+  `app/paper_index/` (index paper bot). Do not reintroduce.
 
 ---
 
@@ -145,50 +125,54 @@ frontend/
 ├── vite.config.ts         ← '@'→src alias, /api proxy → http://127.0.0.1:8000
 ├── tailwind.config.ts     ← design tokens (bg/fg/accent palette)
 ├── tsconfig.json
+├── .env.example / .env.production  ← VITE_API_BASE_URL plumbing
 └── src/
     ├── main.tsx           ← React root, QueryClient, router
-    ├── App.tsx            ← Route table (/, /screener, /paper-trading, /stock/:s)
+    ├── App.tsx            ← Route table (/, /screener, /stock/:s, /indices, /indices/:s, /live)
     ├── index.css          ← Tailwind layers + reusable component classes
     ├── vite-env.d.ts      ← Vite ImportMetaEnv typing
     │
     ├── api/
-    │   ├── types.ts       ← All API DTOs (screener + paper + tone maps)
-    │   └── client.ts      ← axios + screenerApi + paperApi
+    │   ├── types.ts       ← All API DTOs (screener + live verification + index + live analysis + tone maps)
+    │   └── client.ts      ← axios + api / liveVerificationApi / indicesApi / liveApi
     │
     ├── lib/
-    │   └── format.ts      ← inr / num / pct / signed helpers (single source)
+    │   ├── format.ts                 ← inr / num / pct / signed helpers (single source)
+    │   ├── appMode.ts                ← Historical/Live mode store (zustand)
+    │   └── useLiveVerificationPoller.ts ← 15-min auto-refresh of live verifier
     │
     ├── pages/
     │   ├── Dashboard.tsx           ← Top-pick cards & regime summary
     │   ├── Screener.tsx            ← Big table + category filters + live prices
     │   ├── StockDetail.tsx         ← Indicators / chart / AI explain
-    │   ├── PaperTrading.tsx        ← Composite page using components/paper/*
     │   ├── IndexAnalysis.tsx       ← Indices list + per-index detail (snapshot + chain)
-    │   └── PaperIndexTrading.tsx   ← Paper-index bot dashboard (single-file with sub-components)
+    │   └── LiveAnalysis.tsx        ← Live mode dashboard (regime, top movers, observations, decisions)
     │
     └── components/
-        ├── Layout.tsx        ← Top nav (Dashboard / Screener / Paper / Indices / Index Bot)
+        ├── Layout.tsx        ← Top nav (Dashboard / Screener / Indices / + Live Dashboard in Live mode)
         ├── Badge.tsx
         ├── ScreenerTable.tsx
         ├── StockCard.tsx
         ├── IndicatorPanel.tsx
         ├── PriceChart.tsx
         ├── AIExplain.tsx
-        ├── paper/            ← Paper-stock-trading widgets
-        │   └── (AccountSummary, BotStatus, ActionsToolbar, TradeCandidatesTable, …)
-        └── indices/          ← Index analysis widgets
-            ├── IndexCard.tsx          ← Dashboard card for one index
-            └── OptionChainTable.tsx   ← ATM-windowed CE/PE table + summary
+        ├── indices/          ← Index analysis widgets
+        │   ├── IndexCard.tsx          ← Dashboard card for one index
+        │   └── OptionChainTable.tsx   ← ATM-windowed CE/PE table + summary
+        └── live/             ← Live Analysis widgets
+            ├── DecisionsFeed.tsx
+            ├── MarketRegimeBanner.tsx
+            ├── ObservationCard.tsx
+            └── TopMoversLadder.tsx
 ```
 
 ### Frontend data-flow rules
 
 - Server state: **TanStack Query** (`useQuery` / `useMutation`). Stable
   query keys per page. Mutations call `queryClient.invalidateQueries`.
-- Polling: `Dashboard` & `Screener` poll `stocksApi.getPrices` every
-  60 s. `PaperTrading` polls status / open positions every 30 s.
-- Forms: local `useState`, not React-Hook-Form. The only form-heavy surface
-  today is `paper/ConfigPanel.tsx`.
+- Polling: `Dashboard` & `Screener` poll prices every 60 s. Live Analysis
+  page polls every `poll_interval_min` while in Live mode.
+- Forms: local `useState`, not React-Hook-Form.
 - All number rendering goes through `lib/format.ts` so locale and tabular
   numerals stay consistent.
 
@@ -211,66 +195,55 @@ frontend/
 - `GET  /indices/{symbol}/option-chain` (NSE primary, yfinance fallback)
 - `POST /admin/refresh-indices` · `/refresh-indices-async` · `/refresh-indices-intraday` · `GET /admin/index-cache-status`
 
-### Paper-stock-trading endpoints (`/v1/paper-trading/`)
-- `GET  /config` · `POST /config` · `GET /status`
-- `POST /run-selection` · `POST /simulate-day` · `POST /replay`
-- `POST /process-live-tick`  ← apply one yfinance live-price tick to all PENDING/OPEN paper positions
-- `GET  /live-debug`         ← per-gate diagnostic: explains why the live engine is/isn't trading
-- `GET  /signals` · `/orders` · `/positions` · `/ledger`
-- `GET  /performance` · `GET /journal` · `POST /reset`
+### Live Analysis endpoints (`/v1/live-analysis/`)
+- `GET  /mode` · `POST /mode` (HISTORICAL ↔ LIVE)
+- `GET  /config` · `POST /config`
+- `GET  /dashboard` (regime + top movers + active observations + recent decisions)
+- `GET  /decisions?limit=` · `GET /observations?only_active=`
+- `POST /tick` (manual tick)
 
-### Paper-index-trading endpoints (`/v1/paper-index-trading/`)
-Same shape as paper-stock-trading but option-aware (strike/lot/premium fields
-on signals, orders, positions, ledger). Default `max_trades_per_day=5`.
-- `POST /process-live-tick`  ← apply one yfinance live spot tick to all
-  OPEN/PARTIAL_EXIT paper-index positions through the `live_engine`
-  (SL / T1 / T2 / breakeven trail). Never opens new positions intraday.
-  Default `live_trading_enabled=False`; toggle ON in Bot config to let the
-  Mon–Fri 09–15 IST scheduler job (`intraday-paper-index-tick`) run it
-  every minute.
+### Live Signal Verification endpoints (`/v1/live-verification/`)
+- `POST /run?background=` · `GET /summary` · `GET /signals`
 
 The frontend hits `/api/...` and Vite's dev proxy strips `/api` before
 forwarding to the backend.
 
 ---
 
-## Database schema (SQLite, single file at `backend/data/stock.db`)
+## Database schema (SQLite, single file at `backend/data/screener.db`)
 
 Stock-screener tables (`models/orm.py`):
 - `stocks` · `candles` · `snapshots` · `signals`
 
-Paper-stock-trading tables (`models/paper_orm.py`):
-- `paper_bot_config` (singleton)
-- `paper_trade_signals` · `paper_orders` · `paper_positions`
-- `paper_ledger` (append-only) · `paper_daily_performance`
-
 Index-analysis tables (`models/index_orm.py`):
 - `indices` (instruments) · `index_candles` · `index_snapshots`
 - `index_signals` · `index_option_snapshots` (per-strike/expiry chain rows)
+- `live_signal_verification` (per-signal CONFIRMED/WEAKENING/... rows)
 
-Paper-index-trading tables (`models/paper_index_orm.py`):
-- `paper_index_bot_config` (singleton)
-- `paper_index_trade_signals` · `paper_index_orders` · `paper_index_positions`
-- `paper_index_ledger` · `paper_index_daily_performance`
+Live-analysis tables (`models/live_analysis_orm.py`):
+- `live_analysis_config` (singleton)
+- `live_market_snapshots` · `live_observations` · `live_decisions`
 
-`init_db()` calls `Base.metadata.create_all` and imports all four ORM
-modules so every table is registered automatically. There is
+`init_db()` calls `Base.metadata.create_all` and imports each side-effect
+ORM module so every table is registered automatically. There is
 intentionally no Alembic — schema changes are forward-only via dropping
-`backend/data/stock.db` during development.
+`backend/data/screener.db` during development.
 
 ---
 
 ## Generated / runtime artifacts (do not commit)
 
 ```
-backend/data/csv/*.csv     ← per-symbol OHLCV cache (yfinance output)
-backend/data/stock.db      ← SQLite database
-backend/.venv/             ← Python virtualenv
-backend/app/__pycache__/   ← bytecode
-frontend/node_modules/     ← npm packages
-frontend/dist/             ← production build output
+backend/data/ohlcv/*.csv             ← per-symbol OHLCV cache (yfinance output)
+backend/data/ohlcv-indices/*.csv     ← per-index daily OHLCV
+backend/data/ohlcv-indices-intraday/*.csv ← per-index intraday OHLCV
+backend/data/screener.db             ← SQLite database
+backend/.venv/                       ← Python virtualenv
+backend/app/__pycache__/             ← bytecode
+frontend/node_modules/               ← npm packages
+frontend/dist/                       ← production build output
 ```
 
 These are listed in `.gitignore`. If you see edits to anything inside
-`__pycache__/`, `node_modules/`, `data/csv/`, or `dist/`, treat it as a
+`__pycache__/`, `node_modules/`, `data/ohlcv*/`, or `dist/`, treat it as a
 mistake and revert.

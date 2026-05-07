@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     HISTORY_PERIOD: str = "5y"
     INTERVAL: str = "1d"
 
+    # CSV cache directories. Defaults match the historical layout (relative to
+    # the backend working directory) so local dev keeps working unchanged. In
+    # cloud deploys point these at a persistent volume, e.g. /data/ohlcv.
+    STOCK_DATA_DIR: str = "data/ohlcv"
+    INDEX_DATA_DIR: str = "data/ohlcv-indices"
+    INDEX_INTRADAY_DATA_DIR: str = "data/ohlcv-indices-intraday"
+
     # Scheduler
     REFRESH_CRON_HOUR: int = 18
     REFRESH_CRON_MINUTE: int = 30
@@ -41,7 +48,13 @@ class Settings(BaseSettings):
     OPENAI_TIMEOUT_SECONDS: float = 60.0
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Includes capacitor://localhost (Android Capacitor APK) and
+    # http(s)://localhost (iOS Capacitor / Capacitor live reload) so the
+    # mobile shell can hit the API without a per-deploy override.
+    CORS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "capacitor://localhost,http://localhost,https://localhost"
+    )
 
     # Live Analysis Mode (Upstox-backed real-time)
     UPSTOX_API_KEY: str = ""

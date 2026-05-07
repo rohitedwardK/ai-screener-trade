@@ -11,18 +11,32 @@ from typing import Iterable, List, Optional, Sequence
 
 @dataclass
 class OCRow:
-    """Lightweight option-chain row used by analytics."""
+    """Lightweight option-chain row used by analytics.
+
+    Bid/ask are optional and only populated by sources that publish them
+    (Upstox does, NSE's public chain does too in `bidprice` / `askPrice`,
+    yfinance does not). Downstream code must treat None as "no quote" and
+    fall back to LTP.
+    """
     strike: float
     ce_oi: Optional[float] = None
     ce_change_oi: Optional[float] = None
     ce_volume: Optional[float] = None
     ce_iv: Optional[float] = None
     ce_ltp: Optional[float] = None
+    ce_bid: Optional[float] = None
+    ce_ask: Optional[float] = None
     pe_oi: Optional[float] = None
     pe_change_oi: Optional[float] = None
     pe_volume: Optional[float] = None
     pe_iv: Optional[float] = None
     pe_ltp: Optional[float] = None
+    pe_bid: Optional[float] = None
+    pe_ask: Optional[float] = None
+    # Per-strike instrument keys from Upstox so the live verifier can fetch
+    # premium LTPs without re-resolving them. NSE/yfinance leave these None.
+    ce_instrument_key: Optional[str] = None
+    pe_instrument_key: Optional[str] = None
 
 
 @dataclass

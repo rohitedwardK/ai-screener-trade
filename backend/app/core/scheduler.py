@@ -1,4 +1,20 @@
-"""APScheduler wiring for daily refresh."""
+"""APScheduler wiring.
+
+Drives three recurring jobs during NSE hours (Mon-Fri 09-15 IST):
+
+    1. Daily EOD refresh of stock + index OHLCV (single cron at the
+       configured close-of-business hour).
+    2. Intraday index refresh every 5 min — keeps the index dashboard
+       and intraday signals fresh while the market is open.
+    3. Live Analysis tick every `LIVE_ANALYSIS_POLL_MIN` (Upstox-backed,
+       yfinance fallback). Short-circuits when mode != LIVE.
+    4. Live screener verification every 15 min — cross-checks persisted
+       EOD signals against current LTPs.
+
+Paper-trading auto-bots have been removed from this app. Anything that
+made autonomous order/sizing/exit decisions used to live here too; the
+remaining jobs are read-only data refreshes + verification.
+"""
 from __future__ import annotations
 
 import logging
@@ -9,79 +25,17 @@ from apscheduler.triggers.cron import CronTrigger
 from ..config import get_settings
 from ..db import SessionLocal
 from ..live_analysis import config as live_cfg, service as live_service
-from ..paper import config as paper_cfg, service as paper_service
-from ..paper_index import (
-    config as paper_index_cfg,
-    service as paper_index_service,
-)
-from ..paper_index.index_pipeline import (
+from .index_pipeline import (
     refresh_intraday as run_index_intraday_refresh,
     run_full_refresh as run_index_full_refresh,
 )
+from .live_strike_verification import run_strike_verification
+from .live_verification import run_live_verification
 from .pipeline import run_full_refresh
 
 log = logging.getLogger(__name__)
 
 _scheduler: BackgroundScheduler | None = None
-
-
-def run_paper_live_tick() -> None:
-    """Scheduler entrypoint: poll yfinance and apply live-tick logic.
-
-    Idempotent and exception-safe. Short-circuits when:
-        - we are outside the NSE regular session (handles weekends and the
-          09:00-09:14 / 15:31-15:59 edges that the cron trigger leaves in),
-        - or the operator has not switched on live trading in the bot config.
-    """
-    if not paper_service.is_market_open():
-        return
-    with SessionLocal() as db:
-        try:
-            cfg = paper_cfg.snapshot(db)
-        except Exception:
-            log.exception("paper live-tick: failed to read config; skipping")
-            return
-        if not cfg.live_trading_enabled:
-            return
-        try:
-            result = paper_service.process_live_tick(db)
-        except Exception:
-            log.exception("paper live-tick: process_live_tick failed")
-            return
-    log.info(
-        "paper live-tick: priced=%d entries=%d exits=%d realized_today=%.2f status=%s",
-        result.symbols_priced, result.entries_filled, result.exits_triggered,
-        result.realized_pnl_today, result.bot_status,
-    )
-
-
-def run_paper_index_live_tick() -> None:
-    """Trade-management agent for the paper-INDEX bot.
-
-    Mirrors `run_paper_live_tick` but for index option positions. Walks
-    only OPEN/PARTIAL_EXIT positions through `paper_index.live_engine`;
-    never opens new entries intraday. Simulation only.
-    """
-    if not paper_index_service.is_market_open():
-        return
-    with SessionLocal() as db:
-        try:
-            cfg = paper_index_cfg.snapshot(db)
-        except Exception:
-            log.exception("paper-index live-tick: failed to read config; skipping")
-            return
-        if not cfg.live_trading_enabled:
-            return
-        try:
-            result = paper_index_service.process_live_tick(db)
-        except Exception:
-            log.exception("paper-index live-tick: process_live_tick failed")
-            return
-    log.info(
-        "paper-index live-tick: priced=%d exits=%d realized_today=%.2f status=%s",
-        result.symbols_priced, result.exits_triggered,
-        result.realized_pnl_today, result.bot_status,
-    )
 
 
 def run_live_analysis_tick() -> None:
@@ -116,48 +70,54 @@ def run_live_analysis_tick() -> None:
     )
 
 
-def run_paper_auto_selection() -> None:
-    """Scheduler entrypoint: run the daily Run Selection automatically.
+def run_live_screener_verification() -> None:
+    """Scheduler entrypoint: cross-check persisted EOD signals against live LTPs.
 
-    Fires once per day shortly after market open. Idempotent: skips when
-    selection has already produced rows for today's date so a manual press
-    earlier in the morning isn't double-counted. Gated on the live-trading
-    toggle so manual users keep their existing workflow unchanged.
+    Mon-Fri */15min during NSE regular session. Idempotent and exception-
+    safe. Short-circuits outside market hours so the cron wake-up at the
+    minute boundary doesn't churn the DB on weekends or pre-open.
     """
-    from datetime import date as _date
-    from sqlalchemy import select as _select, func as _func
-    from ..models.paper_orm import PaperTradeSignal
-
-    if not paper_service.is_market_open():
+    if not live_service.is_market_open():
         return
-    with SessionLocal() as db:
-        try:
-            cfg = paper_cfg.snapshot(db)
-        except Exception:
-            log.exception("paper auto-selection: failed to read config; skipping")
-            return
-        if not cfg.live_trading_enabled:
-            return
-
-        today = _date.today()
-        already = int(db.scalar(
-            _select(_func.count(PaperTradeSignal.id)).where(
-                PaperTradeSignal.signal_date == today
-            )
-        ) or 0)
-        if already > 0:
-            log.info("paper auto-selection: already ran today (%d rows); skipping", already)
-            return
-
-        try:
-            result = paper_service.run_selection(db)
-        except Exception:
-            log.exception("paper auto-selection: run_selection failed")
-            return
+    try:
+        result = run_live_verification()
+    except Exception:
+        log.exception("live-screener-verification: run failed")
+        return
     log.info(
-        "paper auto-selection: regime=%s candidates=%d selected=%d skipped=%d",
-        result.market_regime, result.candidates_evaluated,
-        len(result.selected), len(result.skipped),
+        "live-screener-verification: signals=%d upserted=%d source=%s "
+        "confirmed=%d weakening=%d invalidated=%d strengthened=%d",
+        result.signals_evaluated, result.rows_upserted, result.source,
+        result.by_status.get("CONFIRMED", 0),
+        result.by_status.get("WEAKENING", 0),
+        result.by_status.get("INVALIDATED", 0),
+        result.by_status.get("STRENGTHENED", 0),
+    )
+
+
+def run_live_strike_verification_job() -> None:
+    """Scheduler entrypoint: project ACTIVE strike recommendations onto the
+    live option premium and underlying spot, marking T1/T2/STOP/INVALIDATED.
+
+    Mon-Fri every 5 min during NSE regular session. Short-circuits outside
+    market hours."""
+    if not live_service.is_market_open():
+        return
+    try:
+        result = run_strike_verification()
+    except Exception:
+        log.exception("live-strike-verification: run failed")
+        return
+    log.info(
+        "live-strike-verification: rows_updated=%d active=%d t1=%d t2=%d "
+        "stop=%d invalidated=%d expired=%d",
+        result.rows_updated,
+        result.by_status.get("ACTIVE", 0),
+        result.by_status.get("T1_HIT", 0),
+        result.by_status.get("T2_HIT", 0),
+        result.by_status.get("STOP_HIT", 0),
+        result.by_status.get("INVALIDATED", 0),
+        result.by_status.get("EXPIRED", 0),
     )
 
 
@@ -210,53 +170,6 @@ def start_scheduler() -> BackgroundScheduler | None:
         coalesce=True,
         max_instances=1,
     )
-    # Paper-trading live tick: every minute Mon-Fri 09-15 IST. The job
-    # itself short-circuits outside 09:15-15:30 and when live trading is
-    # disabled, so this cron just guarantees the wake-up.
-    sched.add_job(
-        run_paper_live_tick,
-        trigger=CronTrigger(
-            day_of_week="mon-fri",
-            hour="9-15",
-            minute="*",
-        ),
-        id="intraday-paper-tick",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-    )
-    # Paper-trading auto Run Selection: once per trading day at 09:16 IST,
-    # one minute after market open, so PENDING positions exist before the
-    # live-tick loop starts evaluating fills. Gated on live_trading_enabled
-    # and idempotent (skips when today's signals already exist).
-    sched.add_job(
-        run_paper_auto_selection,
-        trigger=CronTrigger(
-            day_of_week="mon-fri",
-            hour=9,
-            minute=16,
-        ),
-        id="auto-paper-selection",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-    )
-    # Paper-INDEX trade-management agent: every minute Mon-Fri 09-15 IST.
-    # Same short-circuit pattern as the stock live-tick job (market closed
-    # or live_trading_enabled off skips the body). Manages OPEN positions
-    # only - never opens new ones intraday.
-    sched.add_job(
-        run_paper_index_live_tick,
-        trigger=CronTrigger(
-            day_of_week="mon-fri",
-            hour="9-15",
-            minute="*",
-        ),
-        id="intraday-paper-index-tick",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-    )
     # Live Analysis tick: every poll_interval_min (default 3) Mon-Fri
     # 09-15 IST. The job short-circuits when mode != LIVE, so this cron
     # just guarantees the wake-up. Cadence is fixed at the cron level so
@@ -274,12 +187,45 @@ def start_scheduler() -> BackgroundScheduler | None:
         coalesce=True,
         max_instances=1,
     )
+    # Live screener verification: every 15 min Mon-Fri 09-15 IST. Reads the
+    # latest persisted signals, builds an intraday-projected today-bar from
+    # live LTPs, and writes one verification row per signal so the dashboard
+    # can show CONFIRMED / WEAKENING / INVALIDATED / STRENGTHENED status.
+    # Idempotent; the body itself short-circuits outside 09:15-15:30 IST.
+    sched.add_job(
+        run_live_screener_verification,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="*/15",
+        ),
+        id="live-screener-verification",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Live strike-recommendation verification: every 5 min Mon-Fri 09-15 IST.
+    # Refreshes premium LTPs from Upstox (chain fallback for missing keys),
+    # marks T1/T2/STOP/INVALIDATED/EXPIRED so the UI can render live status
+    # pills next to each persisted weekly recommendation.
+    sched.add_job(
+        run_live_strike_verification_job,
+        trigger=CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="*/5",
+        ),
+        id="live-strike-verification",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     sched.start()
     _scheduler = sched
     log.info(
         "Scheduler started: daily-refresh @ %02d:%02d IST + index intraday */5 "
-        "+ paper live-tick */1 + paper-index live-tick */1 + paper auto-selection "
-        "@ 09:16 IST + live-analysis */%d (Mon-Fri)",
+        "+ live-analysis */%d + live-verification */15 + strike-verification */5 "
+        "(Mon-Fri)",
         settings.REFRESH_CRON_HOUR, settings.REFRESH_CRON_MINUTE,
         max(int(settings.LIVE_ANALYSIS_POLL_MIN), 1),
     )

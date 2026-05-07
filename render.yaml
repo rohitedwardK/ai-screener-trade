@@ -1,0 +1,48 @@
+# Render Blueprint for the Signals backend.
+#
+# To deploy:
+#   1. Push this repo to GitHub.
+#   2. Render dashboard -> New -> Blueprint -> select repo.
+#   3. Confirm and Render reads this file, creating the service + disk.
+#   4. Once live, copy the public URL (e.g. https://signals-backend.onrender.com)
+#      into frontend/.env.production as VITE_API_BASE_URL, then rebuild the APK.
+#
+# Single-instance only: the in-process APScheduler in app/core/scheduler.py
+# would double-fire jobs on multi-instance scaling. Keep numInstances at 1.
+services:
+  - type: web
+    name: signals-backend
+    env: docker
+    plan: starter
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    region: singapore
+    healthCheckPath: /health
+    numInstances: 1
+    autoDeploy: true
+    disk:
+      name: signals-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_URL
+        value: sqlite:////data/screener.db
+      - key: STOCK_DATA_DIR
+        value: /data/ohlcv
+      - key: INDEX_DATA_DIR
+        value: /data/ohlcv-indices
+      - key: INDEX_INTRADAY_DATA_DIR
+        value: /data/ohlcv-indices-intraday
+      - key: CORS_ORIGINS
+        value: capacitor://localhost,http://localhost,https://localhost
+      - key: ENABLE_SCHEDULER
+        value: "true"
+      - key: LLM_PROVIDER
+        value: template
+      # Set in the Render dashboard (sync: false) to avoid committing secrets.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: UPSTOX_API_KEY
+        sync: false
+      - key: UPSTOX_ACCESS_TOKEN
+        sync: false

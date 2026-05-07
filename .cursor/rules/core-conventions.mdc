@@ -1,5 +1,5 @@
 ---
-description: Core conventions for the Nifty 50 AI Stock Screener + Paper Trading repo
+description: Core conventions for the Nifty 50 AI Stock Screener repo
 alwaysApply: true
 ---
 
@@ -11,26 +11,31 @@ about layout and intent.
 
 ## Hard rules — do NOT violate
 
-- **Paper trading is simulation only.** Never add a real broker SDK or live
-  order placement code.
-- Every signal/trade plan has a stop-loss / invalidation. ORM enforces it
-  (`stop_loss = Column(Float, nullable=False)` on `paper_positions`).
+- **No autonomous trading bots.** Paper-trading bots (stock + index)
+  were removed from this app. Do not reintroduce decision engines, order
+  simulators, position managers, ledgers, or any "auto" trade-management
+  scheduler that opens, closes, or sizes positions. The app is now
+  read-only analysis: screener + index analysis + live verification +
+  live observation.
+- **No real broker SDK or live order placement.** Ever.
+- Every screener / index signal carries a stop-loss / invalidation level.
+  Never return a trade plan without one.
 - User-facing AI output ends with: *"Research and decision-support only.
   Not financial advice."* — keep this verbatim.
-- Backtests must not have look-ahead. Slice CSV with `df[: as_of]` then
-  recompute indicators on that slice.
+- Backtests / look-back analysis must not have look-ahead. Slice CSV with
+  `df[: as_of]` then recompute indicators on that slice.
 
 ## Comment style
 
 ```python
-# ❌ BAD — narrates what the code does
-# Loop over signals and apply the decision engine
+# BAD — narrates what the code does
+# Loop over signals and apply the rule engine
 for signal in signals:
     engine.evaluate(signal)
 
-# ✅ GOOD — explains WHY (a non-obvious constraint)
-# Skip pre-aggregation: ranking depends on per-signal automation_score
-# which is only finalised after sizing.
+# GOOD — explains WHY (a non-obvious constraint)
+# Skip pre-aggregation: ranking depends on per-signal score which is only
+# finalised after risk adjustments downstream.
 for signal in signals:
     engine.evaluate(signal)
 ```
@@ -46,4 +51,5 @@ for signal in signals:
 - New top-level files unless absolutely necessary.
 - New dependencies without clear justification.
 - Comments that just translate code into English.
-- Bypass flags for the kill-switch, position-sizing rejections, or stop-loss.
+- Auto-trading code paths (decision/sizing/simulator/scheduler-driven
+  position management). The app is intentionally read-only.

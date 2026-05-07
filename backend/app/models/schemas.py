@@ -62,6 +62,21 @@ class StockDetailOut(BaseModel):
     signals: List[SignalOut] = []
 
 
+class LiveVerificationView(BaseModel):
+    """Inline live cross-check attached to a screener row (when present)."""
+    status: str
+    live_close: float
+    live_rsi: Optional[float] = None
+    live_adx: Optional[float] = None
+    live_regime: str
+    score_delta: Optional[float] = None
+    distance_to_stop_pct: Optional[float] = None
+    distance_to_t1_pct: Optional[float] = None
+    notes: List[str] = []
+    source: Optional[str] = None
+    run_at: datetime
+
+
 class ScreenerRow(BaseModel):
     symbol: str
     name: Optional[str] = None
@@ -80,6 +95,7 @@ class ScreenerRow(BaseModel):
     target_2: Optional[float] = None
     invalidation: Optional[float] = None
     reasons: List[str] = []
+    live: Optional[LiveVerificationView] = None
 
 
 class CategoryCount(BaseModel):

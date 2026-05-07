@@ -10,21 +10,22 @@ alwaysApply: false
 
 All tests use **deterministic synthetic OHLCV** fixtures from `conftest.py`.
 Never hit yfinance or any external service from a test. If you need a new
-shape of price series, add a builder to `conftest.py` (existing helpers:
-`steady_uptrend`, `mean_reverting`, `breakout_then_pullback`, etc.).
+shape of price series, add a builder to `conftest.py`.
 
 ## Test scope per file
 
 | File | Covers |
 | --- | --- |
 | `test_indicators.py` | EMA / RSI / MACD / ATR / ADX / Bollinger numerics |
-| `test_signals.py` | 9 categories + score / confidence / trade plan |
-| `test_repository.py` | DAO upserts, idempotency |
-| `test_pipeline_no_network.py` | Pipeline orchestration with stubbed fetcher |
-| `test_paper_decision.py` | Filter rules, ranking, skip reasons |
-| `test_paper_sizing.py` | Quantity formula, adjustments, rejections |
-| `test_paper_simulator.py` | Entry / SL / T1 / T2 / trailing / same-candle policies |
-| `test_paper_performance.py` | Aggregate metrics, equity curve, drawdown |
+| `test_signals.py` | 9 stock screener categories + score / confidence / trade plan |
+| `test_regime.py` | Per-instrument regime classifier |
+| `test_risk.py` | ATR%, volume, gap labels |
+| `test_index_pivots.py` | Classical floor-trader pivots |
+| `test_index_signals.py` | Index trend / breakout / pullback (LONG + SHORT) |
+| `test_option_chain_metrics.py` | PCR, max-pain, IV-skew, bias, strike picker |
+| `test_live_quotes.py` | Shared live-quote cache + Upstox / yfinance fallback |
+| `test_live_verifier.py` | EOD signal verification status transitions |
+| `test_live_movers.py` / `test_live_observer.py` / `test_live_strategy.py` / `test_live_regime.py` | Live Analysis engine pieces |
 
 ## Style
 
@@ -33,9 +34,6 @@ shape of price series, add a builder to `conftest.py` (existing helpers:
   ATR%, setup types, etc.).
 - Assert on **specific** values, not "is not None". The whole point of
   deterministic synthetic data is reproducibility.
-- When testing the simulator, assert on the **stream of `SimEvent`s** the
-  pure function returns — don't go through `service.simulate_day` for
-  unit tests.
 
 ## Run
 

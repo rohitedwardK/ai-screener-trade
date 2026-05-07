@@ -14,7 +14,9 @@ from ..analysis import option_chain_metrics as ocm
 from ..core.index_universe import all_index_symbols, get_index, index_meta
 from ..data import index_fetcher, index_repository as idx_repo, option_chain as oc_data
 from ..db import get_db
+from ..models.index_orm import IndexStrikeRecommendation
 from ..models.index_schemas import (
+    ContractRecommendationOut,
     IndexCandleOut,
     IndexDetailOut,
     IndexInstrumentOut,
@@ -24,6 +26,7 @@ from ..models.index_schemas import (
     OptionChainOut,
     OptionChainRow,
     OptionChainSummary,
+    StrikeLegOut,
 )
 
 log = logging.getLogger(__name__)
@@ -56,6 +59,35 @@ def _live_prices(symbols: List[str]) -> Dict[str, float]:
 
 
 _RANGE_TO_BARS = {"1m": 22, "3m": 66, "6m": 132, "1y": 252, "2y": 504, "5y": 1260}
+
+
+def _rec_to_schema(rec: IndexStrikeRecommendation) -> ContractRecommendationOut:
+    """Map the ORM recommendation row to the API schema (legs are JSON, not ORM)."""
+    legs = [StrikeLegOut.model_validate(l) for l in (rec.legs_json or [])]
+    return ContractRecommendationOut(
+        id=int(rec.id),
+        signal_id=int(rec.signal_id),
+        symbol=rec.symbol,
+        code=rec.code,
+        strategy=rec.strategy,
+        direction=rec.direction,
+        expiry=rec.expiry,
+        legs=legs,
+        net_debit=float(rec.net_debit),
+        max_profit=float(rec.max_profit) if rec.max_profit is not None else None,
+        max_loss=float(rec.max_loss),
+        entry_premium=float(rec.entry_premium),
+        sl_premium=float(rec.sl_premium),
+        t1_premium=float(rec.t1_premium),
+        t2_premium=float(rec.t2_premium),
+        breakeven=float(rec.breakeven) if rec.breakeven is not None else None,
+        notes=list(rec.notes_json or []),
+        rejection_reason=rec.rejection_reason,
+        status=rec.status,
+        last_premium=float(rec.last_premium) if rec.last_premium is not None else None,
+        last_checked_at=rec.last_checked_at,
+        created_at=rec.created_at,
+    )
 
 
 @router.get("", response_model=List[IndexInstrumentOut])
@@ -124,6 +156,18 @@ def prices(symbols: Optional[str] = Query(None)) -> Dict[str, float]:
     return _live_prices(syms)
 
 
+@router.get("/strike-recommendations/active", response_model=List[ContractRecommendationOut])
+def list_active_strike_recommendations(
+    db: Session = Depends(get_db),
+) -> List[ContractRecommendationOut]:
+    """All currently-ACTIVE strike recommendations across every index.
+
+    Powers the live "tracker" panel in the UI. Sorted newest first by
+    `created_at` (already enforced in the repo helper)."""
+    rows = idx_repo.active_recommendations(db)
+    return [_rec_to_schema(r) for r in rows]
+
+
 @router.get("/{symbol:path}", response_model=IndexDetailOut)
 def get_index_detail(symbol: str, db: Session = Depends(get_db)) -> IndexDetailOut:
     instrument = idx_repo.get_index(db, symbol)
@@ -131,13 +175,27 @@ def get_index_detail(symbol: str, db: Session = Depends(get_db)) -> IndexDetailO
         raise HTTPException(404, f"Index {symbol} not found")
     snap = idx_repo.latest_snapshot(db, symbol)
     sigs = idx_repo.signals_for_symbol(db, symbol, limit=10)
+    # Bulk-attach recommendations for the listed signals so the UI can show
+    # premium-level SL/T inline. One query, not N+1.
+    recs_by_sig = idx_repo.recommendations_for_signals(db, [int(s.id) for s in sigs])
+
+    signals_out: List[IndexSignalOut] = []
+    for sig in sigs:
+        out = IndexSignalOut.model_validate(sig)
+        recs = recs_by_sig.get(int(sig.id), [])
+        if recs:
+            out = out.model_copy(update={
+                "recommendations": [_rec_to_schema(r) for r in recs],
+            })
+        signals_out.append(out)
+
     snap_out: Optional[IndexSnapshotOut] = (
         IndexSnapshotOut.model_validate(snap) if snap is not None else None
     )
     return IndexDetailOut(
         instrument=IndexInstrumentOut.model_validate(instrument),
         snapshot=snap_out,
-        signals=[IndexSignalOut.model_validate(s) for s in sigs],
+        signals=signals_out,
     )
 
 
@@ -162,6 +220,30 @@ def get_history(
             volume=float(row["volume"]),
         ))
     return out
+
+
+@router.get(
+    "/{symbol:path}/strike-recommendations",
+    response_model=List[ContractRecommendationOut],
+)
+def get_strike_recommendations(
+    symbol: str,
+    signal_id: Optional[int] = Query(
+        None,
+        description="Specific signal ID. When omitted returns the recs for the latest signal of this index.",
+    ),
+    db: Session = Depends(get_db),
+) -> List[ContractRecommendationOut]:
+    instrument = idx_repo.get_index(db, symbol)
+    if instrument is None:
+        raise HTTPException(404, f"Index {symbol} not found")
+    if signal_id is None:
+        latest = idx_repo.signals_for_symbol(db, symbol, limit=1)
+        if not latest:
+            return []
+        signal_id = int(latest[0].id)
+    rows = idx_repo.recommendations_for_signal(db, signal_id)
+    return [_rec_to_schema(r) for r in rows]
 
 
 @router.get("/{symbol:path}/option-chain", response_model=OptionChainOut)

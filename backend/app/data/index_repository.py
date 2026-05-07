@@ -16,6 +16,7 @@ from ..models.index_orm import (
     IndexOptionSnapshot,
     IndexSignal,
     IndexSnapshot,
+    IndexStrikeRecommendation,
 )
 
 log = logging.getLogger(__name__)
@@ -169,13 +170,22 @@ def latest_snapshot(db: Session, symbol: str) -> Optional[IndexSnapshot]:
 
 # ---------- Signals ----------
 
-def save_signals(db: Session, signals: List[dict]) -> int:
+def save_signals(db: Session, signals: List[dict]) -> List[IndexSignal]:
+    """Insert signals and return the persisted ORM objects (with IDs).
+
+    Returns the saved list (rather than a count) so callers can chain
+    additional inserts that need the new `signal_id` foreign key — e.g.
+    `index_strike_recommendations`. Callers that only need a count can
+    use `len(...)` on the returned list.
+    """
     if not signals:
-        return 0
+        return []
     objs = [IndexSignal(**s) for s in signals]
     db.add_all(objs)
     db.commit()
-    return len(objs)
+    for obj in objs:
+        db.refresh(obj)
+    return objs
 
 
 def latest_signals(
@@ -265,3 +275,71 @@ def purge_old_option_snapshots(db: Session, keep_days: int = 7) -> int:
     )
     db.commit()
     return result.rowcount or 0
+
+
+# ---------- Strike recommendations ----------
+
+def save_strike_recommendations(db: Session, rows: List[dict]) -> int:
+    """Append-only insert. Old recs age out via `purge_old_signals` cascade
+    (the FK has `ondelete=CASCADE` on `index_signals.id`)."""
+    if not rows:
+        return 0
+    objs = [IndexStrikeRecommendation(**r) for r in rows]
+    db.add_all(objs)
+    db.commit()
+    return len(objs)
+
+
+def recommendations_for_signal(
+    db: Session, signal_id: int,
+) -> List[IndexStrikeRecommendation]:
+    stmt = (
+        select(IndexStrikeRecommendation)
+        .where(IndexStrikeRecommendation.signal_id == signal_id)
+        .order_by(IndexStrikeRecommendation.strategy.asc())
+    )
+    return list(db.scalars(stmt))
+
+
+def recommendations_for_signals(
+    db: Session, signal_ids: List[int],
+) -> Dict[int, List[IndexStrikeRecommendation]]:
+    """Bulk lookup: signal_id → recommendations. Used by the API to attach
+    recs to a list of signals in one query."""
+    if not signal_ids:
+        return {}
+    stmt = (
+        select(IndexStrikeRecommendation)
+        .where(IndexStrikeRecommendation.signal_id.in_(signal_ids))
+        .order_by(
+            IndexStrikeRecommendation.signal_id.asc(),
+            IndexStrikeRecommendation.strategy.asc(),
+        )
+    )
+    out: Dict[int, List[IndexStrikeRecommendation]] = {}
+    for rec in db.scalars(stmt):
+        out.setdefault(int(rec.signal_id), []).append(rec)
+    return out
+
+
+def active_recommendations(db: Session) -> List[IndexStrikeRecommendation]:
+    stmt = (
+        select(IndexStrikeRecommendation)
+        .where(IndexStrikeRecommendation.status == "ACTIVE")
+        .order_by(IndexStrikeRecommendation.created_at.desc())
+    )
+    return list(db.scalars(stmt))
+
+
+def update_recommendation_status(
+    db: Session,
+    *, recommendation_id: int, status: str,
+    last_premium: Optional[float], last_checked_at: datetime,
+) -> None:
+    rec = db.get(IndexStrikeRecommendation, recommendation_id)
+    if rec is None:
+        return
+    rec.status = status
+    rec.last_premium = last_premium
+    rec.last_checked_at = last_checked_at
+    db.commit()

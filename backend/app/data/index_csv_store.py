@@ -14,12 +14,26 @@ from typing import Optional
 
 import pandas as pd
 
+from ..config import get_settings
+
 log = logging.getLogger(__name__)
 
-DAILY_DIR = Path("data") / "ohlcv-indices"
-INTRADAY_DIR = Path("data") / "ohlcv-indices-intraday"
-DAILY_DIR.mkdir(parents=True, exist_ok=True)
-INTRADAY_DIR.mkdir(parents=True, exist_ok=True)
+
+def _daily_dir() -> Path:
+    p = Path(get_settings().INDEX_DATA_DIR)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _intraday_dir() -> Path:
+    p = Path(get_settings().INDEX_INTRADAY_DATA_DIR)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+# Backwards-compatible module attributes; prefer the helpers below.
+DAILY_DIR = _daily_dir()
+INTRADAY_DIR = _intraday_dir()
 
 
 def _safe_name(symbol: str) -> str:
@@ -27,7 +41,7 @@ def _safe_name(symbol: str) -> str:
 
 
 def _path(symbol: str, *, intraday: bool) -> Path:
-    base = INTRADAY_DIR if intraday else DAILY_DIR
+    base = _intraday_dir() if intraday else _daily_dir()
     return base / f"{_safe_name(symbol)}.csv"
 
 
@@ -112,6 +126,6 @@ def incremental_start(symbol: str, overlap_days: int = 5, *, intraday: bool = Fa
 
 
 def list_cached(*, intraday: bool = False) -> list[str]:
-    base = INTRADAY_DIR if intraday else DAILY_DIR
+    base = _intraday_dir() if intraday else _daily_dir()
     return sorted(p.stem.replace("_NSEI", "^NSEI").replace("_BSESN", "^BSESN").replace("_NSEBANK", "^NSEBANK")
                   for p in base.glob("*.csv"))

@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, liveVerificationApi } from "@/api/client";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   History,
 } from "lucide-react";
 import { useAppMode, type AppMode } from "@/lib/appMode";
+import { useLiveVerificationPoller } from "@/lib/useLiveVerificationPoller";
 
 /**
  * Top-level chrome: header, mode toggle, nav, search, footer.
@@ -37,10 +38,48 @@ export function Layout() {
     void hydrate();
   }, [hydrate]);
 
+  // Refresh chains two stages:
+  //   1. EOD pipeline (`api.refresh`) — incremental yfinance pull, no-op
+  //      once today's daily bar is already cached.
+  //   2. Live signal verification — projects an intraday today-bar from the
+  //      latest LTP and reconciles every persisted signal so the UI shows
+  //      CONFIRMED / WEAKENING / INVALIDATED / STRENGTHENED status.
+  // Failures in stage 2 are logged but don't roll back stage 1; the EOD
+  // baseline is the source of truth.
+  const [refreshStage, setRefreshStage] = useState<
+    "idle" | "eod" | "live" | "done"
+  >("idle");
   const refreshMut = useMutation({
-    mutationFn: () => api.refresh(),
+    mutationFn: async () => {
+      setRefreshStage("eod");
+      const eod = await api.refresh();
+      setRefreshStage("live");
+      try {
+        await liveVerificationApi.run();
+      } catch (err) {
+        console.warn("Live verification step failed", err);
+      }
+      setRefreshStage("done");
+      return eod;
+    },
     onSuccess: () => {
       qc.invalidateQueries();
+      setTimeout(() => setRefreshStage("idle"), 1500);
+    },
+    onError: () => {
+      setRefreshStage("idle");
+    },
+  });
+
+  // Auto-poll the live verifier every 15 minutes during NSE hours so the
+  // dashboard "live status" pills stay in sync without a manual click.
+  useLiveVerificationPoller({
+    enabled: mode === "HISTORICAL",
+    intervalMs: 15 * 60 * 1000,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["screener"] });
+      qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["live-verification-summary"] });
     },
   });
 
@@ -71,15 +110,12 @@ export function Layout() {
               <>
                 <NavLinkPill to="/live" label="Live Dashboard" />
                 <NavLinkPill to="/indices" label="Indices" />
-                <NavLinkPill to="/paper-index-trading" label="Index Bot" />
               </>
             ) : (
               <>
                 <NavLinkPill to="/" end label="Dashboard" />
                 <NavLinkPill to="/screener" label="Screener" />
-                <NavLinkPill to="/paper-trading" label="Paper Trading" />
                 <NavLinkPill to="/indices" label="Indices" />
-                <NavLinkPill to="/paper-index-trading" label="Index Bot" />
               </>
             )}
           </nav>
@@ -114,7 +150,9 @@ export function Layout() {
         </div>
         {refreshMut.isPending && (
           <div className="border-t border-border bg-accent-blue/5 px-6 py-1.5 text-xs text-accent-blue">
-            Refreshing data — fetching 50 symbols, computing indicators and signals…
+            {refreshStage === "live"
+              ? "Cross-checking live prices against persisted signals…"
+              : "Refreshing data — fetching 50 symbols, computing indicators and signals…"}
           </div>
         )}
         {refreshMut.isError && (

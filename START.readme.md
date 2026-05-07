@@ -1,9 +1,14 @@
 # Manual Start Guide
 
-How to start the AI Stock Screener + Paper Trading app on Windows (PowerShell).
+How to start the AI Stock Screener app on Windows (PowerShell).
 
 > Run each block in its **own** PowerShell window. The backend and frontend
 > are long-running processes; both must stay open while you use the app.
+
+> **Note:** the paper-trading bots (stock + index) were removed in the 2026
+> cleanup to keep the app light. There is no auto-fill, no auto-exit, no
+> ledger, no kill switch. The app is read-only analysis: screener + index
+> analysis + live verification + live observation.
 
 ---
 
@@ -11,12 +16,11 @@ How to start the AI Stock Screener + Paper Trading app on Windows (PowerShell).
 
 | Service | URL |
 | --- | --- |
-| Frontend (dashboard / screener / paper-trading / indices / index bot) | http://localhost:5173 |
+| Frontend (dashboard / screener / indices / live) | http://localhost:5173 |
 | Backend Swagger / OpenAPI | http://127.0.0.1:8000/docs |
 | Backend health check | http://127.0.0.1:8000/health |
-| Backend paper-trading status | http://127.0.0.1:8000/v1/paper-trading/status |
-| Backend paper-index-trading status | http://127.0.0.1:8000/v1/paper-index-trading/status |
 | Backend indices dashboard | http://127.0.0.1:8000/indices/dashboard |
+| Backend live-analysis dashboard | http://127.0.0.1:8000/v1/live-analysis/dashboard |
 
 ---
 
@@ -83,11 +87,11 @@ You should see:
 
 ```
 VITE v6.4.2  ready in 2413 ms
-➜  Local:   http://localhost:5173/
+-> Local:   http://localhost:5173/
 ```
 
 Open http://localhost:5173 — pages: `/` (Dashboard), `/screener`,
-`/paper-trading`, `/indices`, `/indices/:symbol`, `/paper-index-trading`.
+`/stock/:symbol`, `/indices`, `/indices/:symbol`, `/live`.
 
 Stop with `Ctrl+C`.
 
@@ -116,7 +120,8 @@ if ($conn) {
 }
 ```
 
-Or use Task Manager → Details → end any orphan `python.exe` (uvicorn) or `node.exe` (vite).
+Or use Task Manager → Details → end any orphan `python.exe` (uvicorn) or
+`node.exe` (vite).
 
 ---
 
@@ -129,78 +134,6 @@ curl.exe -X POST "http://127.0.0.1:8000/admin/refresh"
 ```
 
 Pass `?full=true` to force a full 5y re-download.
-
-### Run the paper-trading bot for today
-
-```powershell
-# 1. Generate paper-trade signals from the latest screener run
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-trading/run-selection"
-
-# 2. Simulate fills, stops, and targets for a target date
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-trading/simulate-day?date=2026-05-06"
-
-# 3. Read state
-curl.exe "http://127.0.0.1:8000/v1/paper-trading/status"
-curl.exe "http://127.0.0.1:8000/v1/paper-trading/positions?status=open"
-curl.exe "http://127.0.0.1:8000/v1/paper-trading/performance"
-curl.exe "http://127.0.0.1:8000/v1/paper-trading/journal?date=2026-05-06"
-```
-
-Or do all of this from the UI under **Paper Trading** → toolbar buttons.
-
-### Replay a historical date range
-
-```powershell
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-trading/replay?start=2026-04-01&end=2026-05-01"
-```
-
-### Live-tick mode (autonomous paper trading)
-
-When `live_trading_enabled` is on, two scheduler jobs run automatically
-during NSE market hours (Mon-Fri 09:15-15:30 IST):
-
-1. **`auto-paper-selection`** (09:16 IST) calls Run Selection for you so
-   PENDING positions are ready before live ticks start. Idempotent — if
-   you already pressed Run Selection earlier in the morning, it skips.
-2. **`intraday-paper-tick`** (every minute) fetches live yfinance prices
-   for symbols of all PENDING/OPEN positions and applies fills, stops,
-   target-1 partials, target-2 final exits, and breakeven trailing.
-
-To enable:
-
-1. Open the Paper Trading page → **Config** → set **Live trading
-   (auto fills/exits)** to *Enabled* and **Save**.
-2. **Restart the backend** so APScheduler picks up the new live-tick and
-   auto-selection jobs (a one-time step the first time you upgrade).
-3. Done. The bot status card shows a `Live: ON / OFF` badge and the
-   timestamp of the most recent tick.
-
-If nothing seems to happen, expand the **Live Diagnostics** panel on
-the Paper Trading page. It walks through every gate the live engine
-must clear (live toggle, scheduler heartbeat, market hours, screener
-freshness, presence of PENDING/OPEN positions) and tells you exactly
-which one is blocked, plus the live distance from each pending entry
-to its planned price.
-
-```powershell
-# Manual one-shot live tick (e.g. outside market hours, for testing):
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-trading/process-live-tick"
-
-# Same diagnostic the UI panel shows:
-curl.exe "http://127.0.0.1:8000/v1/paper-trading/live-debug"
-```
-
-> Yahoo Finance publishes NSE 1-minute bars with a roughly 15-minute
-> delay; this is acceptable because paper trading is a simulation. No
-> real broker is contacted and no real orders are placed.
-
-### Reset paper-trading state
-
-```powershell
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-trading/reset?confirm=YES"
-```
-
-This wipes all paper signals / orders / positions / ledger / daily-perf rows. The bot config row is **preserved**.
 
 ### Refresh the index layer (Nifty / Bank Nifty / Sensex)
 
@@ -215,24 +148,34 @@ curl.exe -X POST "http://127.0.0.1:8000/admin/refresh-indices-intraday"
 curl.exe "http://127.0.0.1:8000/admin/index-cache-status"
 ```
 
-### Run the paper-index-bot for today
+### Run a live signal verification pass
 
 ```powershell
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-index-trading/run-selection"
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-index-trading/simulate-day"
-
-curl.exe "http://127.0.0.1:8000/v1/paper-index-trading/status"
-curl.exe "http://127.0.0.1:8000/v1/paper-index-trading/positions?status=open"
-curl.exe "http://127.0.0.1:8000/v1/paper-index-trading/performance"
+curl.exe -X POST "http://127.0.0.1:8000/v1/live-verification/run"
+curl.exe "http://127.0.0.1:8000/v1/live-verification/summary"
 ```
 
-Or use the **Index Bot** page in the UI (`/paper-index-trading`).
+The scheduler runs this every 15 min during market hours automatically;
+this manual call is mostly for outside-hours testing.
 
-### Reset paper-index-trading state
+### Switch into Live Analysis mode
 
 ```powershell
-curl.exe -X POST "http://127.0.0.1:8000/v1/paper-index-trading/reset?confirm=YES"
+# From the UI: top-right toggle in the header (Historical | Live).
+# From the API:
+curl.exe -X POST "http://127.0.0.1:8000/v1/live-analysis/mode" -H "Content-Type: application/json" -d '{\"mode\":\"LIVE\"}'
+
+# Manual one-shot tick (for testing outside market hours):
+curl.exe -X POST "http://127.0.0.1:8000/v1/live-analysis/tick"
+
+# Read state:
+curl.exe "http://127.0.0.1:8000/v1/live-analysis/dashboard"
+curl.exe "http://127.0.0.1:8000/v1/live-analysis/observations?only_active=true"
+curl.exe "http://127.0.0.1:8000/v1/live-analysis/decisions?limit=20"
 ```
+
+> Live Analysis is **read-only**. It tracks observations and emits
+> `LiveDecision` rows for review. There is no automated trade management.
 
 ---
 
@@ -241,16 +184,15 @@ curl.exe -X POST "http://127.0.0.1:8000/v1/paper-index-trading/reset?confirm=YES
 | Symptom | Cause / Fix |
 | --- | --- |
 | Frontend shows "Backend unreachable" | Backend is not running, or running on a different port. Start step 1. |
-| `404` on `/api/v1/paper-trading/...` from the UI | The Vite proxy strips `/api`, so the backend prefix is `/v1/paper-trading`. Both already match — this only breaks if you edited `vite.config.ts` or the backend prefix. |
 | `ModuleNotFoundError: No module named 'pytest'` | The venv is not active or the package isn't installed. Activate venv and rerun `pip install -r requirements.txt`. |
 | `yfinance` 429 / "possibly delisted" on a few symbols | Yahoo rate limiting. Two known flaky tickers: `LTIM.NS`, `TATAMOTORS.NS`. The pipeline isolates these — others continue. |
 | Frontend port already in use | See section 3 above. |
 | Daily refresh didn't run at 18:30 IST | The scheduler runs only when the backend is running. Check `app.core.scheduler` log lines on startup. |
-| `/indices/{symbol}/option-chain` returns 503 | NSE rate-limiting / cookie-warming failed AND yfinance fallback returned no data. Wait 1–2 minutes and retry; the chain is also memo-cached for 60s in-process. |
+| `/indices/{symbol}/option-chain` returns 503 | NSE rate-limiting / cookie-warming failed AND yfinance fallback returned no data. Wait 1-2 minutes and retry; the chain is also memo-cached for 60s in-process. |
 | Index dashboard is empty | No index refresh has run yet. Trigger `POST /admin/refresh-indices`. |
+| Live Analysis tab shows nothing | App isn't in LIVE mode, or `LIVE_ANALYSIS_ENABLED=false`, or the scheduler isn't running. |
 
 ---
 
 > **Disclaimer**
-> This project is for research and decision-support only. Paper trading is a
-> simulation only — no real broker, no real money. Not financial advice.
+> This project is for research and decision-support only. Not financial advice.

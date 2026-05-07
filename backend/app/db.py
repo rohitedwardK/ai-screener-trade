@@ -51,9 +51,7 @@ def init_db() -> None:
     from .models.orm import Base
     # Importing the side-effect modules registers their tables on the same
     # Base so create_all picks them up without any migration tooling.
-    from .models import paper_orm  # noqa: F401
     from .models import index_orm  # noqa: F401
-    from .models import paper_index_orm  # noqa: F401
     from .models import live_analysis_orm  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

@@ -4,12 +4,12 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Query
 
 from ..core.pipeline import run_full_refresh
-from ..data import csv_store, index_csv_store
-from ..models.schemas import RefreshResult
-from ..paper_index.index_pipeline import (
+from ..core.index_pipeline import (
     refresh_intraday as run_index_intraday_refresh,
     run_full_refresh as run_index_full_refresh,
 )
+from ..data import csv_store, index_csv_store
+from ..models.schemas import RefreshResult
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

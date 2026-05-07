@@ -91,8 +91,54 @@ class Signal(Base):
     reasons_json = Column(JSON, nullable=False, default=list)
 
     stock = relationship("Stock", back_populates="signals")
+    live_verification = relationship(
+        "LiveSignalVerification",
+        back_populates="signal",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_signals_runat_category", "run_at", "category"),
         Index("ix_signals_symbol_runat", "symbol", "run_at"),
+    )
+
+
+class LiveSignalVerification(Base):
+    """Latest live cross-check for a persisted EOD screener signal.
+
+    One row per `signals.id`: each verification run upserts the row so the
+    UI can surface the most recent reconciliation without scanning history.
+    Verification cadence: every 15 min during NSE hours (cron) plus on
+    every manual Refresh click. Status is one of CONFIRMED / WEAKENING /
+    INVALIDATED / STRENGTHENED (see `analysis.live_verifier`).
+    """
+    __tablename__ = "live_signal_verifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(
+        Integer,
+        ForeignKey("signals.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    symbol = Column(String, nullable=False, index=True)
+    run_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    status = Column(String, nullable=False)
+    live_close = Column(Float, nullable=False)
+    live_rsi = Column(Float, nullable=True)
+    live_adx = Column(Float, nullable=True)
+    live_regime = Column(String, nullable=False)
+    score_delta = Column(Float, nullable=True)
+    distance_to_stop_pct = Column(Float, nullable=True)
+    distance_to_t1_pct = Column(Float, nullable=True)
+    notes_json = Column(JSON, nullable=False, default=list)
+    source = Column(String, nullable=True)
+
+    signal = relationship("Signal", back_populates="live_verification")
+
+    __table_args__ = (
+        Index("ix_live_verif_status", "status"),
+        Index("ix_live_verif_runat", "run_at"),
     )

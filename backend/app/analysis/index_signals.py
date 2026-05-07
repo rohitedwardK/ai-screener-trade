@@ -15,12 +15,18 @@ biased by the option-chain summary: bullish chain bias adds points to LONG
 setups and subtracts from SHORT, and vice versa. Sensex (no NSE chain) is
 graded purely on price action.
 
+Plans are sized to the next weekly expiry. ATR scales with the square root
+of time, so a Friday signal with a Tuesday expiry uses a smaller target than
+a Monday signal with the same expiry. This makes each plan honest about how
+much room it has to play out before the option premium decays.
+
 Pure: no DB, no I/O. Returns dataclass `IndexSignalRecord`.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, time, timedelta
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -28,6 +34,68 @@ import pandas as pd
 from .indicators import compute_all, latest_indicator_dict
 from .regime import classify
 from . import patterns
+
+
+# ---------------------------------------------------------------------------
+# Weekly-expiry helpers
+# ---------------------------------------------------------------------------
+
+# Map human-readable expiry day name → Python weekday() index (Mon=0..Sun=6).
+_WEEKDAY_INDEX = {
+    "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
+    "Friday": 4, "Saturday": 5, "Sunday": 6,
+}
+
+# After this IST cut-off on expiry day the weekly contract is effectively
+# done — roll the picker to the following week so we don't recommend a
+# strike with under an hour of life.
+_EXPIRY_DAY_CUTOFF = time(14, 30)
+
+
+def next_weekly_expiry(
+    weekly_expiry_day: Optional[str],
+    today: date,
+    *,
+    now_time: Optional[time] = None,
+) -> date:
+    """Return the next weekly expiry date for an index.
+
+    Args:
+        weekly_expiry_day : e.g. "Tuesday" (Nifty), "Wednesday" (BankNifty).
+                            None => default to Thursday (legacy NSE weekly).
+        today             : Reference trading date.
+        now_time          : Wall-clock IST time used only to roll past the
+                            14:30 cut-off on expiry day. None => assume EOD,
+                            i.e. always roll on expiry day itself.
+    """
+    target_idx = _WEEKDAY_INDEX.get(weekly_expiry_day or "Thursday", 3)
+    today_idx = today.weekday()
+    delta = (target_idx - today_idx) % 7
+    if delta == 0:
+        # Today *is* expiry day. Roll only if we're past the cut-off (or no
+        # cut-off was supplied, which means the caller is running EOD).
+        if now_time is None or now_time >= _EXPIRY_DAY_CUTOFF:
+            delta = 7
+    return today + timedelta(days=delta)
+
+
+def _trading_days_between(start: date, end: date) -> int:
+    """Count Mon-Fri days strictly between start (exclusive) and end (inclusive).
+
+    NSE holidays are not modelled — the picker treats holidays as no-ops which
+    over-estimates DTE by at most one day per holiday in the window. Acceptable
+    for a horizon-scaling heuristic; the option chain LTP itself accounts for
+    the real time decay.
+    """
+    if end <= start:
+        return 0
+    days = 0
+    cursor = start + timedelta(days=1)
+    while cursor <= end:
+        if cursor.weekday() < 5:
+            days += 1
+        cursor += timedelta(days=1)
+    return days
 
 
 CATEGORIES = (
@@ -42,12 +110,18 @@ CATEGORIES = (
 
 @dataclass
 class IndexTradePlan:
-    """Spot-level plan. Option strike + premium-level plan are derived later."""
+    """Spot-level plan sized to the next weekly expiry.
+
+    Option strike + premium-level plan are derived later by `strike_picker`.
+    """
     entry: float
     stop_loss: float
     target_1: float
     target_2: float
     invalidation: float
+    expiry: Optional[date] = None
+    days_to_expiry: Optional[int] = None
+    horizon: str = "WEEKLY"
 
 
 @dataclass
@@ -74,27 +148,50 @@ def _safe(val) -> Optional[float]:
     return float(val)
 
 
-def _long_plan(close: float, atr: float, *, stop_mult: float, rr1: float, rr2: float) -> IndexTradePlan:
-    stop = close - stop_mult * atr
-    risk = close - stop
+def _horizon_distances(
+    atr: float, days_to_expiry: int, *, stop_mult: float = 1.0,
+) -> tuple[float, float, float]:
+    """Return (stop_distance, t1_distance, t2_distance) for a weekly-scaled plan.
+
+    Targets shrink as the expiry approaches: a Friday signal with a Tuesday
+    expiry (DTE=2) caps T2 around 1.4 × ATR, while a Monday signal with the
+    same expiry (DTE=5) reaches the full 2.5 × ATR ceiling.
+    """
+    dte = max(int(days_to_expiry), 1)
+    expected_move = atr * math.sqrt(dte)
+    stop_distance = stop_mult * atr
+    t1_distance = max(1.0 * atr, 0.5 * expected_move)
+    t2_distance = min(2.5 * atr, max(t1_distance + 0.25 * atr, expected_move))
+    return stop_distance, t1_distance, t2_distance
+
+
+def _long_plan(
+    close: float, atr: float, *, stop_mult: float, expiry: date, days_to_expiry: int,
+) -> IndexTradePlan:
+    stop_d, t1_d, t2_d = _horizon_distances(atr, days_to_expiry, stop_mult=stop_mult)
     return IndexTradePlan(
         entry=round(close, 2),
-        stop_loss=round(stop, 2),
-        target_1=round(close + risk * rr1, 2),
-        target_2=round(close + risk * rr2, 2),
-        invalidation=round(stop, 2),
+        stop_loss=round(close - stop_d, 2),
+        target_1=round(close + t1_d, 2),
+        target_2=round(close + t2_d, 2),
+        invalidation=round(close - stop_d, 2),
+        expiry=expiry,
+        days_to_expiry=days_to_expiry,
     )
 
 
-def _short_plan(close: float, atr: float, *, stop_mult: float, rr1: float, rr2: float) -> IndexTradePlan:
-    stop = close + stop_mult * atr
-    risk = stop - close
+def _short_plan(
+    close: float, atr: float, *, stop_mult: float, expiry: date, days_to_expiry: int,
+) -> IndexTradePlan:
+    stop_d, t1_d, t2_d = _horizon_distances(atr, days_to_expiry, stop_mult=stop_mult)
     return IndexTradePlan(
         entry=round(close, 2),
-        stop_loss=round(stop, 2),
-        target_1=round(close - risk * rr1, 2),
-        target_2=round(close - risk * rr2, 2),
-        invalidation=round(stop, 2),
+        stop_loss=round(close + stop_d, 2),
+        target_1=round(close - t1_d, 2),
+        target_2=round(close - t2_d, 2),
+        invalidation=round(close + stop_d, 2),
+        expiry=expiry,
+        days_to_expiry=days_to_expiry,
     )
 
 
@@ -144,8 +241,19 @@ def evaluate_index(
     chain_bias: Optional[str] = None,
     chain_strength: float = 0.0,
     chain_notes: Optional[List[str]] = None,
+    weekly_expiry_day: Optional[str] = None,
+    today: Optional[date] = None,
 ) -> List[IndexSignalRecord]:
-    """Run all rules for one index's daily OHLCV. Returns matching records only."""
+    """Run all rules for one index's daily OHLCV. Returns matching records only.
+
+    Args:
+        weekly_expiry_day : Human-readable expiry day name (e.g. "Tuesday").
+                            Used to size the trade plan to next weekly expiry.
+                            None => defaults to Thursday (legacy NSE weekly).
+        today             : Reference trading date for expiry computation.
+                            None => today() — explicit override is mainly for
+                            tests so they don't drift across weekdays.
+    """
     if df_raw is None or df_raw.empty or len(df_raw) < 60:
         return []
 
@@ -154,12 +262,16 @@ def evaluate_index(
     as_of = pd.Timestamp(df.index[-1]).date()
     close = float(last["close"])
     atr_v = _safe(last.get("atr14"))
-    atr_pct = _safe(last.get("atr_pct"))
     rsi_v = _safe(last.get("rsi14"))
     adx_v = _safe(last.get("adx"))
     macd_h = _safe(last.get("macd_hist"))
     ret20 = _safe(last.get("return_20d"))
     pct_from_high = _safe(last.get("pct_from_52w_high"))
+
+    ref_date = today or as_of
+    expiry = next_weekly_expiry(weekly_expiry_day, ref_date)
+    dte = _trading_days_between(ref_date, expiry)
+    horizon_note = f"Targets sized for {dte}d to {expiry.isoformat()} expiry"
 
     regime, _ = classify(df)
     pat = patterns.detect_all(df)
@@ -184,12 +296,13 @@ def evaluate_index(
     if len(reasons) >= 3 and atr_v is not None:
         score = _score(reasons, cap=5)
         score = _apply_chain_bias(score, "LONG", chain_bias, chain_strength)
-        plan = _long_plan(close, atr_v, stop_mult=1.5, rr1=1.5, rr2=3.0)
+        plan = _long_plan(close, atr_v, stop_mult=1.0, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="TREND_CONTINUATION",
             direction="LONG",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -211,12 +324,13 @@ def evaluate_index(
     if pat.get("breakout_20d") and len(reasons) >= 2 and atr_v is not None:
         score = _score(reasons, cap=5)
         score = _apply_chain_bias(score, "LONG", chain_bias, chain_strength)
-        plan = _long_plan(close, atr_v, stop_mult=1.2, rr1=1.5, rr2=2.5)
+        plan = _long_plan(close, atr_v, stop_mult=0.9, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="BREAKOUT_RETEST",
             direction="LONG",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -234,12 +348,13 @@ def evaluate_index(
     if pat.get("pullback") and len(reasons) >= 2 and atr_v is not None:
         score = _score(reasons, cap=4)
         score = _apply_chain_bias(score, "LONG", chain_bias, chain_strength)
-        plan = _long_plan(close, atr_v, stop_mult=1.3, rr1=1.5, rr2=3.0)
+        plan = _long_plan(close, atr_v, stop_mult=1.0, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="PULLBACK_TO_EMA",
             direction="LONG",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -261,12 +376,13 @@ def evaluate_index(
     if len(reasons) >= 3 and atr_v is not None:
         score = _score(reasons, cap=5)
         score = _apply_chain_bias(score, "SHORT", chain_bias, chain_strength)
-        plan = _short_plan(close, atr_v, stop_mult=1.5, rr1=1.5, rr2=3.0)
+        plan = _short_plan(close, atr_v, stop_mult=1.0, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="TREND_BREAKDOWN",
             direction="SHORT",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -286,12 +402,13 @@ def evaluate_index(
     if (pat.get("bearish_reversal") or pat.get("bearish_engulfing")) and len(reasons) >= 2 and atr_v is not None:
         score = _score(reasons, cap=5)
         score = _apply_chain_bias(score, "SHORT", chain_bias, chain_strength)
-        plan = _short_plan(close, atr_v, stop_mult=1.2, rr1=1.5, rr2=2.5)
+        plan = _short_plan(close, atr_v, stop_mult=0.9, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="BREAKDOWN_RETEST",
             direction="SHORT",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -307,12 +424,13 @@ def evaluate_index(
     if len(reasons) >= 2 and atr_v is not None:
         score = _score(reasons, cap=4)
         score = _apply_chain_bias(score, "SHORT", chain_bias, chain_strength)
-        plan = _short_plan(close, atr_v, stop_mult=1.3, rr1=1.5, rr2=3.0)
+        plan = _short_plan(close, atr_v, stop_mult=1.0, expiry=expiry, days_to_expiry=dte)
+        reasons_with_horizon = reasons + [horizon_note]
         out.append(IndexSignalRecord(
             symbol=symbol, code=code, as_of_date=as_of, category="RALLY_TO_RESISTANCE",
             direction="SHORT",
             score=round(score, 2), confidence=_confidence(reasons),
-            spot=close, reasons=reasons, plan=plan,
+            spot=close, reasons=reasons_with_horizon, plan=plan,
             indicators=indicators_dict, regime=regime,
             option_chain_bias=chain_bias, option_chain_strength=chain_strength,
         ))
@@ -335,6 +453,9 @@ def signal_to_dict(rec: IndexSignalRecord) -> dict:
         "target_1": plan.target_1 if plan else None,
         "target_2": plan.target_2 if plan else None,
         "invalidation": plan.invalidation if plan else None,
+        "expiry": plan.expiry if plan else None,
+        "days_to_expiry": plan.days_to_expiry if plan else None,
+        "horizon": plan.horizon if plan else None,
         "reasons_json": rec.reasons,
         "option_chain_bias": rec.option_chain_bias,
     }

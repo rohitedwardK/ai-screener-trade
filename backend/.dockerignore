@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local development state — the cloud instance writes its own to /data.
+data/
+screener.db
+screener.db-journal
+.env
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -2,41 +2,16 @@ import axios from "axios";
 import type {
   Candle,
   CategoryCount,
+  ContractRecommendation,
   ExplainOut,
   IndexCandle,
   IndexDetail,
   IndexInstrument,
   IndexRow,
+  LiveVerificationRunResult,
+  LiveVerificationSignalRow,
+  LiveVerificationSummary,
   OptionChain,
-  PaperBotConfig,
-  PaperBotConfigUpdate,
-  PaperIndexBotConfig,
-  PaperIndexBotConfigUpdate,
-  PaperIndexJournal,
-  PaperIndexLedgerEvent,
-  PaperIndexLiveTick,
-  PaperIndexOrder,
-  PaperIndexPerformance,
-  PaperIndexPosition,
-  PaperIndexReplay,
-  PaperIndexReset,
-  PaperIndexSelection,
-  PaperIndexSimulateDay,
-  PaperIndexStatus,
-  PaperIndexTradeSignal,
-  PaperJournal,
-  PaperLedgerEvent,
-  PaperLiveDebug,
-  PaperLiveTick,
-  PaperOrder,
-  PaperPerformance,
-  PaperPosition,
-  PaperReplay,
-  PaperReset,
-  PaperSelection,
-  PaperSimulateDay,
-  PaperStatus,
-  PaperTradeSignal,
   RefreshResult,
   ScreenerRow,
   Stock,
@@ -95,91 +70,32 @@ export const api = {
 };
 
 // =====================================================
-// Paper Trading API client
+// Live signal verification API
 // =====================================================
-const paperBase = "/v1/paper-trading";
+const liveVerificationBase = "/v1/live-verification";
 
-export const paperApi = {
-  getConfig: () =>
-    http.get<PaperBotConfig>(`${paperBase}/config`).then((r) => r.data),
-  updateConfig: (patch: PaperBotConfigUpdate) =>
-    http.post<PaperBotConfig>(`${paperBase}/config`, patch).then((r) => r.data),
-
-  getStatus: () =>
-    http.get<PaperStatus>(`${paperBase}/status`).then((r) => r.data),
-
-  runSelection: (date?: string) =>
+export const liveVerificationApi = {
+  run: (background = false) =>
     http
-      .post<PaperSelection>(`${paperBase}/run-selection`, null, {
-        params: date ? { date } : undefined,
+      .post<LiveVerificationRunResult>(liveVerificationBase + "/run", null, {
+        params: background ? { background: true } : undefined,
       })
       .then((r) => r.data),
 
-  simulateDay: (date?: string) =>
+  summary: () =>
     http
-      .post<PaperSimulateDay>(`${paperBase}/simulate-day`, null, {
-        params: date ? { date } : undefined,
-      })
-      .then((r) => r.data),
-
-  processLiveTick: () =>
-    http
-      .post<PaperLiveTick>(`${paperBase}/process-live-tick`)
-      .then((r) => r.data),
-
-  liveDebug: () =>
-    http.get<PaperLiveDebug>(`${paperBase}/live-debug`).then((r) => r.data),
-
-  replay: (start: string, end: string) =>
-    http
-      .post<PaperReplay>(`${paperBase}/replay`, null, {
-        params: { start, end },
-      })
+      .get<LiveVerificationSummary>(liveVerificationBase + "/summary")
       .then((r) => r.data),
 
   listSignals: (params?: {
-    date?: string;
-    decision?: "selected" | "skipped";
+    status?: string;
     symbol?: string;
     limit?: number;
   }) =>
     http
-      .get<PaperTradeSignal[]>(`${paperBase}/signals`, { params })
-      .then((r) => r.data),
-
-  listOrders: (params?: { status?: string; symbol?: string; limit?: number }) =>
-    http.get<PaperOrder[]>(`${paperBase}/orders`, { params }).then((r) => r.data),
-
-  listPositions: (params?: { status?: string; symbol?: string; limit?: number }) =>
-    http
-      .get<PaperPosition[]>(`${paperBase}/positions`, { params })
-      .then((r) => r.data),
-
-  listLedger: (params?: {
-    from?: string;
-    to?: string;
-    symbol?: string;
-    limit?: number;
-  }) =>
-    http
-      .get<PaperLedgerEvent[]>(`${paperBase}/ledger`, { params })
-      .then((r) => r.data),
-
-  performance: (params?: { from?: string; to?: string }) =>
-    http
-      .get<PaperPerformance>(`${paperBase}/performance`, { params })
-      .then((r) => r.data),
-
-  journal: (date?: string) =>
-    http
-      .get<PaperJournal>(`${paperBase}/journal`, {
-        params: date ? { date } : undefined,
+      .get<LiveVerificationSignalRow[]>(liveVerificationBase + "/signals", {
+        params,
       })
-      .then((r) => r.data),
-
-  reset: () =>
-    http
-      .post<PaperReset>(`${paperBase}/reset`, null, { params: { confirm: "YES" } })
       .then((r) => r.data),
 };
 
@@ -209,100 +125,16 @@ export const indicesApi = {
     http
       .get<OptionChain>(`/indices/${encodeURIComponent(symbol)}/option-chain`)
       .then((r) => r.data),
-};
-
-// =====================================================
-// Paper Index Trading API
-// =====================================================
-const paperIndexBase = "/v1/paper-index-trading";
-
-export const paperIndexApi = {
-  getConfig: () =>
-    http.get<PaperIndexBotConfig>(`${paperIndexBase}/config`).then((r) => r.data),
-  updateConfig: (patch: PaperIndexBotConfigUpdate) =>
+  strikeRecommendations: (symbol: string, signal_id?: number) =>
     http
-      .post<PaperIndexBotConfig>(`${paperIndexBase}/config`, patch)
+      .get<ContractRecommendation[]>(
+        `/indices/${encodeURIComponent(symbol)}/strike-recommendations`,
+        { params: signal_id ? { signal_id } : undefined },
+      )
       .then((r) => r.data),
-  getStatus: () =>
-    http.get<PaperIndexStatus>(`${paperIndexBase}/status`).then((r) => r.data),
-
-  runSelection: (date?: string) =>
+  activeStrikeRecommendations: () =>
     http
-      .post<PaperIndexSelection>(`${paperIndexBase}/run-selection`, null, {
-        params: date ? { date } : undefined,
-      })
-      .then((r) => r.data),
-
-  simulateDay: (date?: string) =>
-    http
-      .post<PaperIndexSimulateDay>(`${paperIndexBase}/simulate-day`, null, {
-        params: date ? { date } : undefined,
-      })
-      .then((r) => r.data),
-
-  processLiveTick: () =>
-    http
-      .post<PaperIndexLiveTick>(`${paperIndexBase}/process-live-tick`)
-      .then((r) => r.data),
-
-  replay: (start: string, end: string) =>
-    http
-      .post<PaperIndexReplay>(`${paperIndexBase}/replay`, null, {
-        params: { start, end },
-      })
-      .then((r) => r.data),
-
-  listSignals: (params?: {
-    date?: string;
-    decision?: "selected" | "skipped";
-    symbol?: string;
-    limit?: number;
-  }) =>
-    http
-      .get<PaperIndexTradeSignal[]>(`${paperIndexBase}/signals`, { params })
-      .then((r) => r.data),
-
-  listOrders: (params?: { status?: string; symbol?: string; limit?: number }) =>
-    http
-      .get<PaperIndexOrder[]>(`${paperIndexBase}/orders`, { params })
-      .then((r) => r.data),
-
-  listPositions: (params?: {
-    status?: string;
-    symbol?: string;
-    limit?: number;
-  }) =>
-    http
-      .get<PaperIndexPosition[]>(`${paperIndexBase}/positions`, { params })
-      .then((r) => r.data),
-
-  listLedger: (params?: {
-    from?: string;
-    to?: string;
-    symbol?: string;
-    limit?: number;
-  }) =>
-    http
-      .get<PaperIndexLedgerEvent[]>(`${paperIndexBase}/ledger`, { params })
-      .then((r) => r.data),
-
-  performance: (params?: { from?: string; to?: string }) =>
-    http
-      .get<PaperIndexPerformance>(`${paperIndexBase}/performance`, { params })
-      .then((r) => r.data),
-
-  journal: (date?: string) =>
-    http
-      .get<PaperIndexJournal>(`${paperIndexBase}/journal`, {
-        params: date ? { date } : undefined,
-      })
-      .then((r) => r.data),
-
-  reset: () =>
-    http
-      .post<PaperIndexReset>(`${paperIndexBase}/reset`, null, {
-        params: { confirm: "YES" },
-      })
+      .get<ContractRecommendation[]>("/indices/strike-recommendations/active")
       .then((r) => r.data),
 };
 

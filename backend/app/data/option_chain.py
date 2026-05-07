@@ -299,9 +299,38 @@ def fetch_option_chain(
 ) -> Optional[OptionChainPayload]:
     """Return a normalised option-chain payload or None on hard failure.
 
-    Strategy: NSE primary (where supported); yfinance fallback. The caller
-    must handle `None` (signal generation should still work without a chain)."""
+    Source order (each falls through on `None`):
+      1. Upstox v2 — best quality (bid/ask, IV via Greeks, per-leg
+         instrument_keys reusable by the live verifier). Requires an active
+         `UPSTOX_ACCESS_TOKEN`.
+      2. NSE public endpoint — covers NIFTY / BANKNIFTY / FINNIFTY.
+      3. yfinance — partial coverage for Indian indices but always reachable.
+
+    The caller must handle `None` (signal generation still works without
+    a chain — it just won't be biased by put/call OI).
+    """
     code = code.upper()
+
+    # Lazy import to avoid a hard dependency cycle when Upstox is disabled
+    # (upstox_options imports from this module to share OptionRow / _f).
+    try:
+        from . import upstox_options as upstox_oc  # noqa: WPS433 - intentional local import
+    except ImportError:
+        upstox_oc = None
+
+    if upstox_oc is not None and code in {"NIFTY", "BANKNIFTY", "SENSEX"}:
+        target = expiry
+        if target is None:
+            # Fallback: ask Upstox for the contract list. Empty => let the
+            # NSE/yfinance branches below derive an expiry from their own
+            # payload.
+            ups_expiries = upstox_oc.list_upstox_expiries(code)
+            target = min(ups_expiries) if ups_expiries else None
+        if target is not None:
+            ups_result = upstox_oc.fetch_upstox_option_chain(code, target)
+            if ups_result is not None:
+                payload, _keys = ups_result
+                return payload
 
     if code in {"NIFTY", "BANKNIFTY", "FINNIFTY"}:
         raw = fetch_nse_option_chain(code)

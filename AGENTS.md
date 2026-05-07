@@ -13,60 +13,54 @@ overview see [README.md](README.md).
 
 ## 1. What this project is
 
-**AI Stock Screener + Paper Trading bot for the Indian Nifty 50, plus a
-parallel Index Analysis + Paper-Index-Bot layer for Nifty / Bank Nifty /
-Sensex.** Four layers:
+**AI Stock Screener + Live signal verification + Index Analysis for the Indian
+Nifty 50, Bank Nifty, and Sensex.** Three layers, all read-only / analysis only:
 
 1. **Stock Screener.** Daily yfinance pull → CSV cache → SQLite mirror →
- indicators → 9 rule-based signal categories → trade plans (entry /
- stop / target / invalidation) → AI explanation. Lives in
- `backend/app/{analysis,data,core,api,ai}` and
- `frontend/src/{pages,components}` (Dashboard, Screener, Stock detail).
-2. **Paper Stock-Trading bot (simulation only).** Reads screener output,
- applies disciplined rules (decision engine → sizing → simulated
- order/position lifecycle → ledger → kill switch → daily performance →
- AI journal). Lives in `backend/app/paper/` +
- `backend/app/api/paper_trading.py` +
- `frontend/src/pages/PaperTrading.tsx` + `frontend/src/components/paper/`.
- Optional **live-tick mode**: when the operator turns on
- `live_trading_enabled` in the config, an APScheduler job polls
- yfinance 1-min prices every minute during NSE hours (09:15–15:30 IST,
- Mon–Fri) and applies fills, stops, targets, and breakeven trailing
- to PENDING/OPEN paper positions via `paper/live_engine.py` and
- `service.process_live_tick`. Still simulation only — no broker SDK,
- no real orders. yfinance NSE 1-min bars are roughly 15 minutes delayed.
-3. **Index Analysis.** Daily + intraday OHLCV for ^NSEI / ^NSEBANK / ^BSESN
- + NSE option chain (yfinance fallback) → indicators → trend / breakout
- / pullback signals + chain bias for Nifty/BankNifty. Lives in
- `backend/app/{analysis/{index_signals,option_chain_metrics}.py,
- data/{index_fetcher,index_csv_store,option_chain,index_repository}.py,
- core/index_universe.py, api/indices.py}` and
- `frontend/src/pages/IndexAnalysis.tsx` +
- `frontend/src/components/indices/`.
-4. **Paper-Index-Bot (simulation only, options-aware).** Mirrors the stock
- paper bot but trades index options (buy ATM/ITM/OTM CE or PE based on
- setup direction). Premium P&L is approximated from a fixed delta. Lives
- in `backend/app/paper_index/` + `backend/app/api/paper_index_trading.py`
- + `frontend/src/pages/PaperIndexTrading.tsx`. Default cap: **5 trades
- per day**, independent of the stock bot. Optional **live trade-management
- agent**: when `live_trading_enabled` is ON in the bot config, an
- APScheduler job polls yfinance spot prices every minute during NSE hours
- (09:15–15:30 IST, Mon–Fri) and walks OPEN/PARTIAL_EXIT positions through
- `paper_index/live_engine.py` for SL / T1-partial / T2 / breakeven trail.
- Mirrors the stock-bot live engine. **Does not open new positions
- intraday**; PENDING entries still fill via the daily `simulate_day` pass.
- Still simulation only — no broker SDK.
+   indicators → 9 rule-based signal categories → trade plans (entry /
+   stop / target / invalidation) → AI explanation. Lives in
+   `backend/app/{analysis,data,core,api,ai}` and
+   `frontend/src/{pages,components}` (Dashboard, Screener, Stock detail).
+2. **Index Analysis.** Daily + intraday OHLCV for ^NSEI / ^NSEBANK / ^BSESN
+   + NSE option chain (yfinance fallback) → indicators → trend / breakout
+   / pullback signals + chain bias for Nifty/BankNifty. Lives in
+   `backend/app/{analysis/{index_signals,option_chain_metrics}.py,
+   data/{index_fetcher,index_csv_store,option_chain,index_repository}.py,
+   core/{index_universe,index_pipeline}.py, api/indices.py}` and
+   `frontend/src/pages/IndexAnalysis.tsx` +
+   `frontend/src/components/indices/`.
+3. **Live Analysis (Upstox-backed).** Optional real-time observation +
+   decision-tracking layer. When the operator flips the app into LIVE
+   mode, an APScheduler tick polls Upstox (or yfinance fallback) every
+   `LIVE_ANALYSIS_POLL_MIN` minutes during NSE hours, builds 3-minute
+   observation windows for top movers, scores them, and persists
+   `LiveDecision` rows for review. **Read-only.** No orders, no
+   simulated positions, no automated trade management. Lives in
+   `backend/app/live_analysis/` + `backend/app/api/live_analysis.py`
+   + `frontend/src/pages/LiveAnalysis.tsx`.
+
+A separate **Live Signal Verification** job runs every 15 min during
+market hours, projecting each persisted EOD signal forward against the
+current LTP and writing a `CONFIRMED / WEAKENING / INVALIDATED /
+STRENGTHENED` row used by the dashboard pills. Lives in
+`backend/app/analysis/live_verifier.py`,
+`backend/app/core/live_verification.py`,
+`backend/app/api/live_verification.py`.
 
 > ## Hard rules — never violate
+> - **No autonomous trading bots.** Paper-trading bots (stock + index)
+>   were removed from this app. Do not reintroduce decision engines,
+>   sizing, simulators, position managers, ledgers, kill switches, or
+>   any scheduler-driven trade management. The app is intentionally
+>   read-only analysis.
 > - **No real broker integration. No live order placement. No real money.**
->   The paper-trading layer is simulation only. Anything that even hints at
->   live trading must be rejected.
-> - Every signal/trade has an **invalidation level**. UI surfaces it; backend
+>   Even adding a broker SDK package name is a red flag.
+> - Every signal carries an **invalidation level**. UI surfaces it; backend
 >   never returns a plan without one.
 > - Every model output ends with: *"Research and decision-support only. Not
 >   financial advice."*
-> - **No look-ahead bias** in backtests. `BacktestRunner` slices each symbol's
->   CSV to `df[: as_of]` and re-runs `compute_all` on that slice.
+> - **No look-ahead bias** in any historical re-evaluation. Slice each
+>   symbol's CSV to `df[: as_of]` and re-run `compute_all` on that slice.
 
 ---
 
@@ -108,13 +102,12 @@ npm run build
 Full guide with troubleshooting is in [START.readme.md](START.readme.md).
 
 URLs:
-- UI: http://localhost:5173 (`/`, `/screener`, `/paper-trading`,
- `/stock/:symbol`, `/indices`, `/indices/:symbol`,
- `/paper-index-trading`)
+- UI: http://localhost:5173 (`/`, `/screener`, `/stock/:symbol`,
+  `/indices`, `/indices/:symbol`, `/live`)
 - Swagger: http://127.0.0.1:8000/docs
-- Paper-trading prefix on backend: `/v1/paper-trading/*` (incl. `POST /process-live-tick`)
-- Paper-index-trading prefix on backend: `/v1/paper-index-trading/*` (incl. `POST /process-live-tick`)
 - Index analysis prefix on backend: `/indices/*`
+- Live analysis prefix on backend: `/v1/live-analysis/*`
+- Live signal verification prefix: `/v1/live-verification/*`
 - Frontend hits `/api/...` and the Vite proxy strips `/api`.
 
 ---
@@ -134,17 +127,16 @@ URLs:
 
 ### Backend Python
 
-- Pure functions where possible (every module in `backend/app/paper/` except
-  `service.py`, `ledger.py`, and `journal.py` is pure / testable in isolation).
+- Pure functions where possible.
 - Indicators are **hand-rolled** in `backend/app/analysis/indicators.py` so
   unit tests are deterministic — do not introduce `pandas-ta` calls.
 - Database access goes through the repository pattern in
-  `backend/app/data/repository.py` and `backend/app/paper/ledger.py`. Don't
-  scatter raw SQL across the codebase.
+  `backend/app/data/repository.py` and `backend/app/data/index_repository.py`.
+  Don't scatter raw SQL across the codebase.
 - All new ORM models share the single `Base` from
   `backend/app/models/orm.py` so `init_db()` picks them up automatically.
 - Pydantic v2 schemas use `ConfigDict(from_attributes=True)` for ORM->JSON
-  conversion (see `backend/app/models/paper_schemas.py`).
+  conversion.
 
 ### Frontend TypeScript / React
 
@@ -159,34 +151,16 @@ URLs:
   `.num` (tabular numerals).
 - Numbers always go through `frontend/src/lib/format.ts` helpers.
 - Server state uses **TanStack Query** with stable query keys
-  (`["paper-status"]`, `["paper-positions-open"]`, etc.). Mutations invalidate
-  by key.
+  (`["screener"]`, `["indices-dashboard"]`, `["live-verification-summary"]`,
+  etc.). Mutations invalidate by key.
 - Live polling pattern: `refetchInterval: PRICE_REFRESH_INTERVAL` constant +
   countdown UI (see `Dashboard.tsx` and `Screener.tsx`).
-
-### Paper-trading layer specifics
-
-- Decision engine, sizing, simulator, performance, kill-switch are **all
-  pure functions**. They take immutable inputs (`PaperConfigSnapshot`,
-  `ScreenerSignal`, `SimPosition`) and return data (`Decision`, `SizingResult`,
-  `SimEvent`, `BotState`, `AggregateMetrics`). DB writes happen only in
-  `service.py`, `ledger.py`, and `positions.py`.
-- The simulator emits a stream of `SimEvent`s; the position manager applies
-  them. Don't shortcut and write directly into ORM positions from `simulator.py`.
-- Same-candle conflicts have three policies (`conservative`, `optimistic`,
-  `ohlc_approx`); default is `conservative` (stop wins).
-- New entries respect every kill-switch reason (see `kill_switch.evaluate`).
-  Don't add bypass flags.
 
 ### Tests
 
 - All tests under `backend/tests/` use **deterministic synthetic OHLCV**
   fixtures (see `conftest.py`). No network access.
-- New paper-trading logic should add corresponding test cases in
-  `test_paper_decision.py` / `test_paper_sizing.py` / `test_paper_simulator.py`
-  / `test_paper_performance.py`.
-- Run `pytest -q` before claiming a change is done. There are 144 tests today;
- that count should only go up.
+- Run `pytest -q` before claiming a change is done.
 
 ---
 
@@ -197,20 +171,11 @@ URLs:
 | Add a new technical indicator | `backend/app/analysis/indicators.py` (+ test in `tests/test_indicators.py`) |
 | Add/change pivot-level math | `backend/app/analysis/pivots.py` (+ test in `tests/test_index_pivots.py`); `compute_all` already calls it |
 | Add a new screener signal category | `backend/app/analysis/signals.py` and `frontend/src/api/types.ts` (`CATEGORY_LABELS`, `CATEGORY_TONE`) |
-| Add/change a paper-stock rule | `backend/app/paper/decision.py` or `sizing.py` (+ test) |
-| New paper-stock order behaviour | `backend/app/paper/simulator.py` (+ test) |
-| New paper-stock endpoint | `backend/app/api/paper_trading.py` |
-| New paper-stock widget | `frontend/src/components/paper/` and `pages/PaperTrading.tsx` |
 | Add a new index | `backend/app/core/index_universe.py` (and run `/admin/refresh-indices`) |
 | Add a new index signal type | `backend/app/analysis/index_signals.py` (+ `tests/test_index_signals.py`) |
 | Add an option-chain metric | `backend/app/analysis/option_chain_metrics.py` (+ tests) |
-| Add/change a paper-index rule | `backend/app/paper_index/decision.py` / `sizing.py` (+ tests) |
-| New paper-index order behaviour | `backend/app/paper_index/simulator.py` (+ test) |
-| New paper-index live-tick logic | `backend/app/paper_index/live_engine.py` (pure spot→premium evaluator) (+ `tests/test_paper_index_live_engine.py`) |
-| New paper-index endpoint | `backend/app/api/paper_index_trading.py` |
-| New paper-index widget | `frontend/src/pages/PaperIndexTrading.tsx` (single-file page with sub-components) or `frontend/src/components/indices/` |
-| New chart on existing pages | Reuse `recharts` patterns from `frontend/src/components/paper/PerformanceCharts.tsx` |
-| Change DB schema | Edit relevant ORM file (`models/orm.py`, `paper_orm.py`, `index_orm.py`, or `paper_index_orm.py`); `init_db()` calls `_sync_sqlite_columns` so new tables AND new columns on existing tables are picked up automatically. SQLite-only project — no Alembic. Renames/drops still need a manual SQL migration. |
+| Add a chart on existing pages | Reuse `recharts` patterns from `frontend/src/components/indices/*` |
+| Change DB schema | Edit relevant ORM file (`models/orm.py`, `index_orm.py`, or `live_analysis_orm.py`); `init_db()` calls `_sync_sqlite_columns` so new tables AND new columns on existing tables are picked up automatically. SQLite-only project — no Alembic. Renames/drops still need a manual SQL migration. |
 | Add a Nifty 50 constituent change | `backend/app/core/universe.py` |
 
 ---
@@ -218,15 +183,9 @@ URLs:
 ## 6. Things to avoid
 
 - **Don't introduce broker SDKs.** Even adding the package name is a red flag.
-- **Don't bypass the kill switch** to "test" something. The simulators must
- always go through `paper.service.simulate_day` or
- `paper_index.service.simulate_day`.
-- **Don't skip stop-losses.** A `PaperPosition` / `PaperIndexPosition` row
- without a stop is invalid; both ORMs enforce
- `stop_loss = Column(Float, nullable=False)`.
-- **Don't add live broker option-chain hooks.** The NSE option-chain client
- in `data/option_chain.py` is read-only and used purely for analysis and
- simulation. Do not extend it to place orders.
+- **Don't reintroduce auto-trading bots.** Decision engines, position
+  sizing, order simulators, ledgers, kill switches, scheduler-driven
+  trade-management — all explicitly removed and not coming back.
 - **Don't add comments that narrate code.** ("# now we calculate the RSI",
   "// fetch the prices") — useless noise.
 - **Don't widen the public API surface area** without updating the OpenAPI
@@ -247,12 +206,10 @@ matches what you're touching:
 - `.cursor/rules/core-conventions.mdc` — applies to every conversation.
 - `.cursor/rules/backend-python.mdc` — applies when editing `backend/**/*.py`.
 - `.cursor/rules/frontend-react.mdc` — applies when editing `frontend/**/*.{ts,tsx}`.
-- `.cursor/rules/paper-trading.mdc` — applies inside the paper-trading layer.
 - `.cursor/rules/testing.mdc` — applies inside `backend/tests/`.
 
 ---
 
 ## 8. Disclaimer (always include in user-facing output)
 
-> Research and decision-support only. Paper trading is a simulation. Not
-> financial advice.
+> Research and decision-support only. Not financial advice.

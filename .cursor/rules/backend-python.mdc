@@ -9,16 +9,19 @@ alwaysApply: false
 ## Module layering
 
 ```
-analysis/* → pure, no DB / network. Used by signals.py, paper/*.
-data/*     → yfinance + CSV cache + SQLAlchemy DAOs.
-core/*     → orchestration (pipeline, scheduler, universe).
-ai/*       → LLM providers (template / ollama / openai).
-api/*      → FastAPI routers — thin, delegate to core or paper.service.
-paper/*    → paper-trading layer; pure modules + service/ledger/positions.
+analysis/*       → pure, no DB / network. Used by signals.py + index_signals.py.
+data/*           → yfinance + CSV cache + SQLAlchemy DAOs.
+core/*           → orchestration (pipeline, index_pipeline, scheduler, universe).
+ai/*             → LLM providers (template / ollama / openai).
+api/*            → FastAPI routers — thin, delegate to core/* services.
+live_analysis/*  → Upstox-backed observation + decision tracking (read-only).
 ```
 
-API routers must NOT call yfinance directly; route via `core/pipeline.py`
-or `data/fetcher.py`.
+API routers must NOT call yfinance directly; route via `core/pipeline.py`,
+`core/index_pipeline.py`, or `data/fetcher.py`.
+
+The paper-trading bot layers (`app/paper/` and `app/paper_index/`) have
+been removed from this codebase. Do not reintroduce them.
 
 ## Indicators & analysis
 
@@ -28,21 +31,23 @@ function set if you need a new indicator and add a unit test.
 
 ## ORM & schemas
 
-- New tables → add to `models/orm.py` or `models/paper_orm.py` using the
-  shared `Base`. `init_db()` calls `Base.metadata.create_all` and already
-  imports `paper_orm`, so no extra wiring.
+- New tables → add to `models/orm.py`, `models/index_orm.py`, or
+  `models/live_analysis_orm.py` using the shared `Base`. `init_db()` calls
+  `Base.metadata.create_all` and imports each side-effect module so new
+  tables are picked up automatically.
 - Pydantic v2: use `model_config = ConfigDict(from_attributes=True)` for
-  ORM → JSON. See `models/paper_schemas.py`.
+  ORM → JSON.
 - Enum-like fields stay as `str` columns; whitelist values in the schema.
 
 ## Concurrency / scheduling
 
 - `yf_client.pace()` enforces app-layer pacing for yfinance — keep it.
-- `core/scheduler.py` uses APScheduler; jobs must be idempotent because
-  `/admin/refresh-async` can run them on demand too.
+- `core/scheduler.py` uses APScheduler. Jobs must be idempotent because
+  `/admin/refresh-async` can run them on demand too. The scheduler runs
+  ONLY data refreshes + verification — no position-management jobs.
 
 ## Style
 
 - Type hints on all public functions.
-- Prefer `dataclass(frozen=True)` for value objects (see `paper/sizing.py`).
+- Prefer `dataclass(frozen=True)` for value objects.
 - Don't catch `Exception` without re-raising or logging structured context.

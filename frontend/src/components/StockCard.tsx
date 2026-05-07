@@ -2,7 +2,11 @@ import { Link } from "react-router-dom";
 import { Badge } from "./Badge";
 import { fmt, regimeTone, scoreTone, symbolDisplay } from "@/lib/format";
 import type { ScreenerRow } from "@/api/types";
-import { CATEGORY_TONE } from "@/api/types";
+import {
+  CATEGORY_TONE,
+  LIVE_STATUS_LABEL,
+  LIVE_STATUS_TONE,
+} from "@/api/types";
 
 export function StockCard({
   row,
@@ -11,7 +15,11 @@ export function StockCard({
   row: ScreenerRow;
   livePrice?: number;
 }) {
-  const price = livePrice ?? row.close;
+  const price = livePrice ?? row.live?.live_close ?? row.close;
+  const liveTooltip = row.live
+    ? `Live ${LIVE_STATUS_LABEL[row.live.status]} · close ${fmt.inr(row.live.live_close)}` +
+      (row.live.live_rsi != null ? ` · RSI ${fmt.num(row.live.live_rsi, 0)}` : "")
+    : undefined;
   return (
     <Link
       to={`/stock/${row.symbol}`}
@@ -41,6 +49,13 @@ export function StockCard({
           {row.category.replace(/_/g, " ")}
         </Badge>
         <Badge tone={scoreTone(row.score)}>Score {fmt.num(row.score, 0)}</Badge>
+        {row.live && (
+          <span title={liveTooltip}>
+            <Badge tone={LIVE_STATUS_TONE[row.live.status]}>
+              Live · {LIVE_STATUS_LABEL[row.live.status]}
+            </Badge>
+          </span>
+        )}
       </div>
       {row.entry != null && (
         <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border text-[11px]">

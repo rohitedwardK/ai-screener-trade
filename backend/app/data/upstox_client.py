@@ -95,8 +95,10 @@ NIFTY50_INSTRUMENT_KEYS: Dict[str, str] = {
     "BPCL.NS":       "NSE_EQ|INE029A01011",
     "LTIM.NS":       "NSE_EQ|INE214T01019",
     "SHRIRAMFIN.NS": "NSE_EQ|INE721A01013",
-    # Nifty 50 spot index (used by regime classifier).
+    # Spot indices (regime classifier + paper-index bot underlying).
     "^NSEI":         "NSE_INDEX|Nifty 50",
+    "^NSEBANK":      "NSE_INDEX|Nifty Bank",
+    "^BSESN":        "BSE_INDEX|SENSEX",
 }
 
 
@@ -360,3 +362,41 @@ def fetch_ltp_batch(symbols: List[str], *, timeout_s: float = 6.0) -> Dict[str, 
     """
     quotes = fetch_quotes_batch(symbols, timeout_s=timeout_s)
     return {s: q.last_price for s, q in quotes.items()}
+
+
+def fetch_quotes_by_instrument_keys(
+    instrument_keys: List[str],
+    *,
+    timeout_s: float = 8.0,
+) -> Dict[str, float]:
+    """LTP fetch keyed by raw Upstox instrument keys.
+
+    Used by the live strike verifier for `NSE_FO|...` option keys that have no
+    yfinance equivalent and therefore aren't in `NIFTY50_INSTRUMENT_KEYS`.
+    Returns {instrument_key: last_price}.
+    """
+    if not instrument_keys:
+        return {}
+    token = get_settings().UPSTOX_ACCESS_TOKEN.strip()
+    if not token or _is_token_dead(token):
+        return {}
+    payload = _request_quotes(token, instrument_keys, timeout_s=timeout_s)
+    if not payload:
+        return {}
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, float] = {}
+    for raw_key, raw_q in data.items():
+        if not isinstance(raw_q, dict):
+            continue
+        # Upstox echoes either the original key or an `instrument_token` form.
+        # We don't try to remap; just emit whatever key the caller can match.
+        key = raw_q.get("instrument_token") or raw_key
+        try:
+            ltp = float(raw_q.get("last_price") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if ltp > 0:
+            out[str(key)] = ltp
+    return out

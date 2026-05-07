@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "@/api/client";
+import { api, liveVerificationApi } from "@/api/client";
 import {
   CATEGORY_DESCRIPTIONS,
   CATEGORY_LABELS,
@@ -9,9 +9,23 @@ import {
 } from "@/api/types";
 import { StockCard } from "@/components/StockCard";
 import { Badge } from "@/components/Badge";
-import { Loader2, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
+import { Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 
 const PRICE_REFRESH_INTERVAL = 60_000;
+const LIVE_SUMMARY_REFRESH_INTERVAL = 90_000;
+
+function formatRelative(iso: string | null): string {
+  if (!iso) return "never";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "never";
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 
 export function Dashboard() {
   const { data, isLoading, isError } = useQuery({
@@ -34,6 +48,12 @@ export function Dashboard() {
     enabled: symbols.length > 0,
     refetchInterval: PRICE_REFRESH_INTERVAL,
     refetchIntervalInBackground: true,
+  });
+
+  const { data: liveSummary } = useQuery({
+    queryKey: ["live-verification-summary"],
+    queryFn: () => liveVerificationApi.summary(),
+    refetchInterval: LIVE_SUMMARY_REFRESH_INTERVAL,
   });
 
   const [countdown, setCountdown] = useState(PRICE_REFRESH_INTERVAL / 1000);
@@ -101,6 +121,39 @@ export function Dashboard() {
           </Link>
         </div>
       </section>
+
+      {liveSummary && liveSummary.total > 0 && (
+        <section
+          className="card p-3 flex items-center gap-3 flex-wrap"
+          aria-label="Live signal verification summary"
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <ShieldCheck className="size-4 text-accent-blue" />
+            <span className="font-medium">Live verification</span>
+            <span className="text-xs text-fg-muted">
+              persisted thesis vs current market
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge tone="green">
+              {liveSummary.confirmed} confirmed
+            </Badge>
+            <Badge tone="amber">
+              {liveSummary.weakening} weakening
+            </Badge>
+            <Badge tone="red">
+              {liveSummary.invalidated} invalidated
+            </Badge>
+            <Badge tone="blue">
+              {liveSummary.strengthened} strengthened
+            </Badge>
+          </div>
+          <span className="ml-auto text-xs text-fg-subtle">
+            refreshed {formatRelative(liveSummary.last_run_at)}
+            {liveSummary.source ? ` · ${liveSummary.source}` : ""}
+          </span>
+        </section>
+      )}
 
       {isEmpty && (
         <div className="card p-6 text-fg-muted">

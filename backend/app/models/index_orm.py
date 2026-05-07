@@ -111,11 +111,63 @@ class IndexSignal(Base):
     reasons_json = Column(JSON, nullable=False, default=list)
     option_chain_bias = Column(String, nullable=True)  # Bullish | Bearish | Neutral
 
+    # Weekly-expiry horizon: target the picker sized this plan for, plus the
+    # remaining trading-day count at signal time. Both are NULL on rows that
+    # predate the weekly-expiry feature.
+    expiry = Column(Date, nullable=True)
+    days_to_expiry = Column(Integer, nullable=True)
+    horizon = Column(String, nullable=True)            # WEEKLY (only value today)
+
     instrument = relationship("IndexInstrument", back_populates="signals")
 
     __table_args__ = (
         Index("ix_index_signals_runat_category", "run_at", "category"),
         Index("ix_index_signals_symbol_runat", "symbol", "run_at"),
+    )
+
+
+class IndexStrikeRecommendation(Base):
+    """A single buy-side option recommendation (single-leg or debit spread).
+
+    One row per (signal_id, strategy). The live verifier overwrites
+    `last_premium`, `last_checked_at`, and `status` in place; the
+    recommendation row itself is immutable from the analysis layer.
+
+    Read-only suggestion table — there is no order, position, or ledger
+    counterpart. Status values are observational, not transactional.
+    """
+    __tablename__ = "index_strike_recommendations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(
+        Integer, ForeignKey("index_signals.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    symbol = Column(String, nullable=False)         # ^NSEI etc.
+    code = Column(String, nullable=False)           # NIFTY etc.
+    strategy = Column(String, nullable=False)       # SINGLE_LEG | DEBIT_SPREAD
+    direction = Column(String, nullable=False)      # LONG | SHORT
+    expiry = Column(Date, nullable=False)
+    legs_json = Column(JSON, nullable=False, default=list)
+    net_debit = Column(Float, nullable=False)
+    max_profit = Column(Float, nullable=True)       # NULL for uncapped single-leg
+    max_loss = Column(Float, nullable=False)
+    entry_premium = Column(Float, nullable=False)
+    sl_premium = Column(Float, nullable=False)
+    t1_premium = Column(Float, nullable=False)
+    t2_premium = Column(Float, nullable=False)
+    breakeven = Column(Float, nullable=True)
+    notes_json = Column(JSON, nullable=False, default=list)
+    rejection_reason = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="ACTIVE")
+    # Updated in-place by the live verifier. Untouched on EOD persist.
+    last_premium = Column(Float, nullable=True)
+    last_checked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_index_strike_recs_signal", "signal_id"),
+        Index("ix_index_strike_recs_status", "status"),
     )
 
 

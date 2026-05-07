@@ -10,9 +10,9 @@ alwaysApply: false
 
 - React 18 functional components + hooks. No class components.
 - Path alias `@` → `frontend/src` (see `vite.config.ts`).
-- API calls go through `frontend/src/api/client.ts`
-  (`screenerApi`, `stocksApi`, `paperApi`). DO NOT call axios directly
-  inside components.
+- API calls go through `frontend/src/api/client.ts` (`api`,
+  `liveVerificationApi`, `indicesApi`, `liveApi`). DO NOT call axios
+  directly inside components.
 
 ## Styling
 
@@ -36,14 +36,15 @@ Always format via `frontend/src/lib/format.ts`:
 ```tsx
 import { fmt } from '@/lib/format';
 
-<td className="num">{fmt.inr(price)}</td>      // ✅
-<td>₹{price.toFixed(2)}</td>                   // ❌
+<td className="num">{fmt.inr(price)}</td>      // OK
+<td>Rs {price.toFixed(2)}</td>                 // BAD
 ```
 
 ## Server state
 
-- TanStack Query 5 with **stable** query keys: `["paper-status"]`,
-  `["paper-positions-open"]`, `["screener-prices", symbols.join(',')]`, …
+- TanStack Query 5 with **stable** query keys: `["screener"]`,
+  `["screener-prices", symbols.join(',')]`, `["indices-dashboard"]`,
+  `["live-verification-summary"]`, ...
 - Live polling: see `Dashboard.tsx`/`Screener.tsx` for the
   `refetchInterval` + countdown pattern.
 - Mutations: `queryClient.invalidateQueries({ queryKey: [...] })` — never
@@ -51,8 +52,12 @@ import { fmt } from '@/lib/format';
 
 ## Routes
 
-`/`, `/screener`, `/paper-trading`, `/stock/:symbol` — defined in `App.tsx`.
-Add new routes there and add a NavLink in `components/Layout.tsx`.
+`/`, `/screener`, `/stock/:symbol`, `/indices`, `/indices/:symbol`,
+`/live` — defined in `App.tsx`. Add new routes there and add a NavLink
+in `components/Layout.tsx`.
+
+The paper-trading routes (`/paper-trading`, `/paper-index-trading`) have
+been removed. Do not reintroduce them.
 
 ## Type-check
 

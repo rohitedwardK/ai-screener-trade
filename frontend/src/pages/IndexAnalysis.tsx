@@ -7,6 +7,7 @@ import { indicesApi } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { IndexCard } from "@/components/indices/IndexCard";
 import { OptionChainTable } from "@/components/indices/OptionChainTable";
+import { StrikeRecommendationsCard } from "@/components/indices/StrikeRecommendationsCard";
 import { fmt, regimeTone, scoreTone } from "@/lib/format";
 import {
   INDEX_CATEGORY_LABELS,
@@ -100,9 +101,6 @@ function IndexListView() {
               Price refresh in {countdown}s
             </span>
           )}
-          <Link to="/paper-index-trading" className="btn btn-primary">
-            Paper Index Bot
-          </Link>
         </div>
       </section>
 
@@ -358,6 +356,10 @@ function IndexDetailView({ symbol }: { symbol: string }) {
 
       <div className="card p-4 space-y-2">
         <h2 className="font-semibold tracking-tight">Recent Signals</h2>
+        <p className="text-xs text-fg-muted">
+          Targets are sized to the next weekly expiry (1-2 week horizon),
+          not multi-month swings.
+        </p>
         {signals.length === 0 ? (
           <p className="text-xs text-fg-muted">No signals yet.</p>
         ) : (
@@ -374,6 +376,8 @@ function IndexDetailView({ symbol }: { symbol: string }) {
                   <th className="text-right px-3 py-1.5">Stop</th>
                   <th className="text-right px-3 py-1.5">T1</th>
                   <th className="text-right px-3 py-1.5">T2</th>
+                  <th className="text-right px-3 py-1.5">Expiry</th>
+                  <th className="text-right px-3 py-1.5">DTE</th>
                   <th className="text-left px-3 py-1.5">Chain</th>
                 </tr>
               </thead>
@@ -419,6 +423,12 @@ function IndexDetailView({ symbol }: { symbol: string }) {
                     <td className="px-3 py-1.5 text-right num text-accent-green">
                       {fmt.num(s.target_2, 2)}
                     </td>
+                    <td className="px-3 py-1.5 text-right text-xs text-fg-muted">
+                      {s.expiry ?? "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right num text-xs text-fg-muted">
+                      {s.days_to_expiry ?? "—"}
+                    </td>
                     <td className="px-3 py-1.5">
                       {s.option_chain_bias ? (
                         <Badge
@@ -437,6 +447,16 @@ function IndexDetailView({ symbol }: { symbol: string }) {
           </div>
         )}
       </div>
+
+      {signals.length > 0 && signals[0].recommendations.length > 0 && (
+        <StrikeRecommendationsCard
+          recommendations={signals[0].recommendations}
+          signalLabel={
+            INDEX_CATEGORY_LABELS[signals[0].category] ?? signals[0].category
+          }
+          expiryLabel={signals[0].expiry}
+        />
+      )}
 
       {supportsChain && optionChain.data && (
         <OptionChainTable chain={optionChain.data} />
