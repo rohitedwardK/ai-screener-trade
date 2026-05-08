@@ -2,6 +2,11 @@
 
 How to start the AI Stock Screener app on Windows (PowerShell).
 
+> **TL;DR** — once everything is set up, just double-click `start.bat` in
+> the repo root. It launches backend + frontend in two windows and opens
+> the dashboard in your default browser. Use `stop.bat` to shut down.
+> Both scripts are idempotent (safe to re-run) and free the ports first.
+
 > Run each block in its **own** PowerShell window. The backend and frontend
 > are long-running processes; both must stay open while you use the app.
 
@@ -16,11 +21,30 @@ How to start the AI Stock Screener app on Windows (PowerShell).
 
 | Service | URL |
 | --- | --- |
-| Frontend (dashboard / screener / indices / live) | http://localhost:5173 |
+| Frontend (dashboard / screener / indices / live / agents) | http://localhost:5173 |
 | Backend Swagger / OpenAPI | http://127.0.0.1:8000/docs |
 | Backend health check | http://127.0.0.1:8000/health |
 | Backend indices dashboard | http://127.0.0.1:8000/indices/dashboard |
 | Backend live-analysis dashboard | http://127.0.0.1:8000/v1/live-analysis/dashboard |
+| Backend agents status / latest briefing | http://127.0.0.1:8000/v1/agents/status |
+
+---
+
+## 0. One-button start / stop (recommended)
+
+After the first-time setup in section 1 + 2, daily operation is just:
+
+```powershell
+# from the repo root
+.\start.bat   # frees :8000 + :5173, launches backend & frontend, opens browser
+.\stop.bat    # kills whatever is bound to :8000 + :5173
+```
+
+Both scripts are idempotent — re-running `start.bat` is safe and will
+restart cleanly. The agentic boot cycle (Data → Analysis → Context → Head
+synthesis) fires automatically inside the backend's startup hook, so the
+dashboard's briefing panel populates within ~30-90s of `start.bat`
+completing. No further commands are needed for daily use.
 
 ---
 

@@ -47,6 +47,32 @@ STRENGTHENED` row used by the dashboard pills. Lives in
 `backend/app/core/live_verification.py`,
 `backend/app/api/live_verification.py`.
 
+4. **Agentic layer (head + worker agents).** A head agent delegates work
+   to four specialists (Data, Analysis, Market Context, Monitoring) and
+   produces a daily briefing the dashboard renders. The deep cycle
+   (refresh → score across all 4 methods → context → synthesis) repeats
+   every `AGENTIC_DEEP_CYCLE_MIN` (default 15 min) during NSE hours; a
+   deterministic 60-sec fast monitor wakes the deep cycle on
+   invalidation breaches or new top movers. The head agent's only
+   LLM-touched task is writing the markdown briefing — everything
+   structured (top picks, sector rotation, etc.) is built by
+   deterministic Python and is therefore always trustworthy. LLM is
+   local Ollama (`llama3.2:latest` by default), called via plain httpx
+   to keep the dependency surface minimal. Lives in
+   `backend/app/agents/{tools,data_agent,analysis_agent,context_agent,
+   monitoring_agent,orchestrator,scheduler_jobs,llm}.py`,
+   `backend/app/api/agents.py`, `backend/app/models/agent_orm.py`, and
+   `frontend/src/{pages/Agents.tsx,components/agents/*}`. Configured by
+   `AGENTIC_*` + `INDIA_VIX_*` + `NEWS_RSS_FEEDS` in `.env`.
+
+### Daily start / stop (Windows)
+
+`start.bat` and `stop.bat` at the repo root are the recommended way to
+boot/shut the app. `start.bat` frees ports 8000 + 5173, launches both
+processes in their own windows, and opens the browser. The agentic boot
+cycle runs automatically inside the backend's lifespan, so no manual
+trigger is needed. Both scripts are idempotent.
+
 > ## Hard rules — never violate
 > - **No autonomous trading bots.** Paper-trading bots (stock + index)
 >   were removed from this app. Do not reintroduce decision engines,

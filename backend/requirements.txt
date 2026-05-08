@@ -20,12 +20,25 @@ SQLAlchemy==2.0.36
 # ML / utilities
 scikit-learn==1.6.0
 joblib==1.4.2
+# PyTorch CPU-only — required for the LSTM column in the Method Analysis demo page.
+# Install separately if the wheel is slow: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch
 
 # Scheduling
 APScheduler==3.10.4
 
 # HTTP / LLM
 httpx==0.28.1
+
+# Agentic layer (custom head-agent + worker agents). The LLM call to Ollama
+# uses the existing httpx client; CrewAI was evaluated but pulled 12 heavy
+# transitive deps (chromadb / lancedb / onnxruntime / pyarrow / mcp / ...) and
+# forced an incompatible starlette pin, all for one summary-generation call.
+# Keeping the surface minimal preserves the project's "intentionally lean"
+# dependency footprint.
+
+# RSS news feed parser used by MarketContextAgent.
+feedparser==6.0.11
 
 # Dev / test
 pytest==8.3.4

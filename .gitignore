@@ -28,3 +28,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# In-flight CSV writes from the OHLCV fetcher (atomic-rename leftovers)
+*.tmp

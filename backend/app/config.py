@@ -66,9 +66,40 @@ class Settings(BaseSettings):
     LIVE_ANALYSIS_TOP_K: int = 8
     LIVE_ANALYSIS_COOLDOWN_MIN: int = 30
 
+    # Agentic layer (CrewAI head agent + worker agents on local Ollama).
+    # AGENTIC_FAST_TICK_SEC is approximate; APScheduler grains at 1 minute so
+    # the fast monitor effectively runs once per minute and short-circuits
+    # outside NSE hours.
+    AGENTIC_ENABLED: bool = True
+    AGENTIC_DEEP_CYCLE_MIN: int = 15
+    AGENTIC_FAST_TICK_SEC: int = 60
+    AGENTIC_BOOT_CYCLE: bool = True
+    # CrewAI 1.14+ recommends the OpenAI-compatible path for Ollama so the
+    # LiteLLM transitive dep can be skipped. The model name is whatever
+    # `ollama list` shows; the base URL hits Ollama's /v1 OpenAI shim.
+    AGENTIC_LLM_MODEL: str = "openai/llama3.2:latest"
+    AGENTIC_LLM_BASE_URL: str = "http://localhost:11434/v1"
+    AGENTIC_LLM_API_KEY: str = "ollama"
+    AGENTIC_LLM_TIMEOUT_SEC: int = 240
+    # India VIX bands. Anything below HIGH is "NORMAL"; >=HIGH and <PANIC is
+    # "ELEVATED"; >=PANIC is "PANIC". Values informed by NSE long-run
+    # distribution (median ~13, 75th pctile ~17, crisis spikes >25).
+    INDIA_VIX_HIGH: float = 18.0
+    INDIA_VIX_PANIC: float = 25.0
+    # Comma-separated RSS feed URLs consumed by MarketContextAgent.
+    NEWS_RSS_FEEDS: str = (
+        "https://www.moneycontrol.com/rss/marketreports.xml,"
+        "https://www.moneycontrol.com/rss/business.xml,"
+        "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms"
+    )
+
     @property
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def news_rss_feed_list(self) -> List[str]:
+        return [u.strip() for u in self.NEWS_RSS_FEEDS.split(",") if u.strip()]
 
 
 @lru_cache(maxsize=1)

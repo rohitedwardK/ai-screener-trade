@@ -22,6 +22,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from ..agents import scheduler_jobs as agent_jobs
 from ..config import get_settings
 from ..db import SessionLocal
 from ..live_analysis import config as live_cfg, service as live_service
@@ -220,14 +221,60 @@ def start_scheduler() -> BackgroundScheduler | None:
         coalesce=True,
         max_instances=1,
     )
+    # Agentic deep cycle: every AGENTIC_DEEP_CYCLE_MIN minutes Mon-Fri 09-15
+    # IST. Body short-circuits when market is closed unless the fast monitor
+    # has flagged a pending request. Wraps the entire crew (Data → Analysis
+    # → Context → Head) and persists a daily_briefings row.
+    if settings.AGENTIC_ENABLED:
+        deep_min = max(int(settings.AGENTIC_DEEP_CYCLE_MIN), 1)
+        sched.add_job(
+            agent_jobs.run_deep_cycle_job,
+            trigger=CronTrigger(
+                day_of_week="mon-fri",
+                hour="9-15",
+                minute=f"*/{deep_min}",
+            ),
+            id="agentic-deep-cycle",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+        # Agentic fast monitor: every minute Mon-Fri 09-15 IST. Deterministic
+        # 60-sec body that wakes the deep cycle on triggers (invalidation
+        # breach, new top mover, deep-cycle overdue). NOT an LLM call.
+        sched.add_job(
+            agent_jobs.run_fast_monitor_job,
+            trigger=CronTrigger(
+                day_of_week="mon-fri",
+                hour="9-15",
+                minute="*",
+            ),
+            id="agentic-fast-monitor",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+        # Weekly RF + GBM + LSTM refit so the operator never has to click
+        # Train. Sunday 22:00 IST keeps it well outside market hours.
+        sched.add_job(
+            agent_jobs.run_weekly_retrain_job,
+            trigger=CronTrigger(day_of_week="sun", hour=22, minute=0),
+            id="agentic-weekly-retrain",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+
     sched.start()
     _scheduler = sched
     log.info(
         "Scheduler started: daily-refresh @ %02d:%02d IST + index intraday */5 "
         "+ live-analysis */%d + live-verification */15 + strike-verification */5 "
-        "(Mon-Fri)",
+        "+ agentic deep-cycle */%d + agentic fast-monitor */1 (Mon-Fri) "
+        "+ weekly retrain Sun 22:00",
         settings.REFRESH_CRON_HOUR, settings.REFRESH_CRON_MINUTE,
         max(int(settings.LIVE_ANALYSIS_POLL_MIN), 1),
+        max(int(settings.AGENTIC_DEEP_CYCLE_MIN), 1),
     )
     return sched
 

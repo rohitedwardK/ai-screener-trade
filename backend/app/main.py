@@ -7,12 +7,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import threading
+
+from .agents import scheduler_jobs as agent_jobs
 from .api import (
     admin,
+    agents as agents_api,
     explain,
     indices,
     live_analysis,
     live_verification,
+    method_analysis,
     screener,
     stocks,
 )
@@ -40,6 +45,16 @@ async def lifespan(app: FastAPI):
         idx_repo.upsert_indices(db, index_meta())
     log.info("Starting scheduler...")
     start_scheduler()
+    settings = get_settings()
+    if settings.AGENTIC_ENABLED and settings.AGENTIC_BOOT_CYCLE:
+        # Fire the on-load deep cycle off-thread so /docs and /health stay
+        # responsive while the crew runs (LLM path can take 60-180s on CPU).
+        log.info("Scheduling on-load agentic boot cycle (background)")
+        threading.Thread(
+            target=agent_jobs.run_boot_cycle_job,
+            daemon=True,
+            name="agentic-boot-cycle",
+        ).start()
     try:
         yield
     finally:
@@ -71,6 +86,8 @@ def create_app() -> FastAPI:
     app.include_router(indices.router)
     app.include_router(live_analysis.router)
     app.include_router(live_verification.router)
+    app.include_router(method_analysis.router)
+    app.include_router(agents_api.router)
 
     @app.get("/")
     def root() -> dict:
