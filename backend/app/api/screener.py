@@ -79,23 +79,59 @@ def _verifications_for(
     return {row.signal_id: row for row in rows}
 
 
+# Statuses that the live verifier flips to once the persisted thesis is broken.
+# We hide these from the default screener listing so the operator focuses on
+# tradable rows; the UI exposes a `Show invalidated` toggle to bring them back.
+_INVALIDATED_STATUSES = frozenset({"INVALIDATED"})
+
+
+def _is_invalidated(verification: Optional[LiveSignalVerification]) -> bool:
+    return verification is not None and verification.status in _INVALIDATED_STATUSES
+
+
 @router.get("", response_model=List[ScreenerRow])
 def list_screener(
     category: Optional[str] = Query(None),
     min_score: float = Query(0.0, ge=0, le=100),
     sector: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=500),
+    include_invalidated: bool = Query(
+        False,
+        description="Include signals whose live verification has flipped to INVALIDATED.",
+    ),
+    live_status: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to one live verification status "
+            "(CONFIRMED / WEAKENING / INVALIDATED / STRENGTHENED). Setting "
+            "this to INVALIDATED implicitly enables include_invalidated."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> List[ScreenerRow]:
     sigs = repo.latest_signals(db, category=category, min_score=min_score)
     verifications = _verifications_for(db, [int(s.id) for s in sigs])
+
+    requested_status = live_status.upper() if live_status else None
+    # Filtering to INVALIDATED would otherwise self-cancel; auto-promote.
+    effective_include_invalidated = include_invalidated or requested_status == "INVALIDATED"
+
     rows: List[ScreenerRow] = []
     for s in sigs:
         snap = repo.latest_snapshot(db, s.symbol)
         stock = repo.get_stock(db, s.symbol)
         if sector and (stock is None or stock.sector != sector):
             continue
-        rows.append(_row_from_signal(s, snap, stock, verifications.get(int(s.id))))
+        verification = verifications.get(int(s.id))
+        if not effective_include_invalidated and _is_invalidated(verification):
+            continue
+        if requested_status is not None:
+            # Rows with no verification yet are dropped when the user explicitly
+            # filters by status — they would otherwise appear "matchless" in
+            # every status filter and confuse the count.
+            if verification is None or verification.status != requested_status:
+                continue
+        rows.append(_row_from_signal(s, snap, stock, verification))
         if len(rows) >= limit:
             break
     return rows
@@ -104,14 +140,19 @@ def list_screener(
 @router.get("/categories", response_model=List[CategoryCount])
 def screener_categories(
     top_n: int = Query(3, ge=1, le=20),
+    include_invalidated: bool = Query(
+        False,
+        description="Include signals whose live verification has flipped to INVALIDATED.",
+    ),
     db: Session = Depends(get_db),
 ) -> List[CategoryCount]:
     sigs = repo.latest_signals(db)
     by_cat: dict[str, list] = defaultdict(list)
-    for s in sigs:
-        by_cat[s.category].append(s)
-
     verifications = _verifications_for(db, [int(s.id) for s in sigs])
+    for s in sigs:
+        if not include_invalidated and _is_invalidated(verifications.get(int(s.id))):
+            continue
+        by_cat[s.category].append(s)
 
     out: List[CategoryCount] = []
     for cat in CATEGORIES:

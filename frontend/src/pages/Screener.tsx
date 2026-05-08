@@ -1,14 +1,26 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "@/api/client";
-import { CATEGORY_LABELS } from "@/api/types";
+import { api, liveVerificationApi } from "@/api/client";
+import { CATEGORY_LABELS, LIVE_STATUS_LABEL, LIVE_STATUS_TONE } from "@/api/types";
+import type {
+  LiveVerificationStatus,
+  LiveVerificationSummary,
+} from "@/api/types";
 import { ScreenerTable } from "@/components/ScreenerTable";
+import { LiveVerificationBanner } from "@/components/LiveVerificationBanner";
 import { Loader2, RefreshCw } from "lucide-react";
 
 const PRICE_REFRESH_INTERVAL = 60_000;
+const LIVE_SUMMARY_REFRESH_INTERVAL = 90_000;
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
+const LIVE_STATUSES: LiveVerificationStatus[] = [
+  "STRENGTHENED",
+  "CONFIRMED",
+  "WEAKENING",
+  "INVALIDATED",
+];
 const SECTORS = [
   "All",
   "IT",
@@ -28,10 +40,14 @@ const SECTORS = [
 ];
 
 export function Screener() {
+  const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const category = params.get("category") ?? "";
   const sector = params.get("sector") ?? "All";
   const minScore = Number(params.get("min_score") ?? "0");
+  const liveStatus = params.get("live_status") ?? "";
+  const includeInvalidated = params.get("include_invalidated") === "1";
+  const [isReverifying, setIsReverifying] = useState(false);
 
   const setParam = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);
@@ -46,14 +62,40 @@ export function Screener() {
       min_score: minScore || 0,
       sector: sector !== "All" ? sector : undefined,
       limit: 200,
+      // Filtering by INVALIDATED implicitly forces include_invalidated on the
+      // backend; we still mirror it here so the URL shows consistent state.
+      include_invalidated:
+        includeInvalidated || liveStatus === "INVALIDATED" ? true : undefined,
+      live_status: liveStatus || undefined,
     }),
-    [category, sector, minScore]
+    [category, sector, minScore, liveStatus, includeInvalidated]
   );
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["screener", queryParams],
     queryFn: () => api.listScreener(queryParams),
   });
+
+  const { data: liveSummary } = useQuery<LiveVerificationSummary>({
+    queryKey: ["live-verification-summary"],
+    queryFn: () => liveVerificationApi.summary(),
+    refetchInterval: LIVE_SUMMARY_REFRESH_INTERVAL,
+  });
+
+  const handleReverify = async () => {
+    if (isReverifying) return;
+    setIsReverifying(true);
+    try {
+      await liveVerificationApi.run(true);
+      // Re-fetching the summary immediately would race the background job;
+      // the next 90s tick or a manual table refresh will pick the fresh row up.
+      await queryClient.invalidateQueries({
+        queryKey: ["live-verification-summary"],
+      });
+    } finally {
+      setIsReverifying(false);
+    }
+  };
 
   const symbols = useMemo(() => {
     if (!data) return [] as string[];
@@ -107,53 +149,98 @@ export function Screener() {
         )}
       </div>
 
-      <div className="card p-3 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-fg-muted">Category</span>
-          <button
-            onClick={() => setParam("category", null)}
-            className={`chip ${!category ? "chip-active" : ""}`}
-          >
-            All
-          </button>
-          {CATEGORIES.map((c) => (
+      <LiveVerificationBanner
+        summary={liveSummary}
+        onRerun={handleReverify}
+        rerunDisabled={isReverifying}
+      />
+
+      <div className="card p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-fg-muted">Category</span>
             <button
-              key={c}
-              onClick={() => setParam("category", c)}
-              className={`chip ${category === c ? "chip-active" : ""}`}
+              onClick={() => setParam("category", null)}
+              className={`chip ${!category ? "chip-active" : ""}`}
             >
-              {CATEGORY_LABELS[c]}
+              All
             </button>
-          ))}
+            {CATEGORIES.map((c) => (
+              <button
+                key={c}
+                onClick={() => setParam("category", c)}
+                className={`chip ${category === c ? "chip-active" : ""}`}
+              >
+                {CATEGORY_LABELS[c]}
+              </button>
+            ))}
+          </div>
+
+          <div className="ml-auto flex items-center gap-3">
+            <label className="text-xs text-fg-muted flex items-center gap-2">
+              Sector
+              <select
+                className="input"
+                value={sector}
+                onChange={(e) => setParam("sector", e.target.value)}
+              >
+                {SECTORS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-xs text-fg-muted flex items-center gap-2">
+              Min score
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={minScore}
+                onChange={(e) => setParam("min_score", e.target.value || "0")}
+                className="input w-20 num text-right"
+              />
+            </label>
+          </div>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
-          <label className="text-xs text-fg-muted flex items-center gap-2">
-            Sector
-            <select
-              className="input"
-              value={sector}
-              onChange={(e) => setParam("sector", e.target.value)}
+        <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-border">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-fg-muted">Live status</span>
+            <button
+              onClick={() => setParam("live_status", null)}
+              className={`chip ${!liveStatus ? "chip-active" : ""}`}
             >
-              {SECTORS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </label>
+              Any
+            </button>
+            {LIVE_STATUSES.map((s) => (
+              <button
+                key={s}
+                onClick={() => setParam("live_status", liveStatus === s ? null : s)}
+                className={`chip ${liveStatus === s ? "chip-active" : ""}`}
+                title={`Filter to ${LIVE_STATUS_LABEL[s]} signals only · tone: ${LIVE_STATUS_TONE[s]}`}
+              >
+                {LIVE_STATUS_LABEL[s]}
+              </button>
+            ))}
+          </div>
 
-          <label className="text-xs text-fg-muted flex items-center gap-2">
-            Min score
+          <label className="ml-auto text-xs text-fg-muted flex items-center gap-2 select-none">
             <input
-              type="number"
-              min={0}
-              max={100}
-              step={5}
-              value={minScore}
-              onChange={(e) => setParam("min_score", e.target.value || "0")}
-              className="input w-20 num text-right"
+              type="checkbox"
+              checked={includeInvalidated}
+              onChange={(e) =>
+                setParam("include_invalidated", e.target.checked ? "1" : null)
+              }
+              disabled={liveStatus === "INVALIDATED"}
             />
+            Show invalidated
+            {liveStatus === "INVALIDATED" && (
+              <span className="text-fg-subtle">(forced by filter)</span>
+            )}
           </label>
         </div>
       </div>

@@ -110,12 +110,16 @@ export function Layout() {
               <>
                 <NavLinkPill to="/live" label="Live Dashboard" />
                 <NavLinkPill to="/indices" label="Indices" />
+                <NavLinkPill to="/method-analysis" label="Method Analysis" />
+                <NavLinkPill to="/agents" label="Agents" />
               </>
             ) : (
               <>
                 <NavLinkPill to="/" end label="Dashboard" />
                 <NavLinkPill to="/screener" label="Screener" />
                 <NavLinkPill to="/indices" label="Indices" />
+                <NavLinkPill to="/method-analysis" label="Method Analysis" />
+                <NavLinkPill to="/agents" label="Agents" />
               </>
             )}
           </nav>

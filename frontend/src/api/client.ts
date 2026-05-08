@@ -1,9 +1,13 @@
 import axios from "axios";
 import type {
+  AgentStatusOut,
+  AllMethodStatus,
   Candle,
   CategoryCount,
   ContractRecommendation,
+  DailyBriefing,
   ExplainOut,
+  FastTickOut,
   IndexCandle,
   IndexDetail,
   IndexInstrument,
@@ -11,6 +15,11 @@ import type {
   LiveVerificationRunResult,
   LiveVerificationSignalRow,
   LiveVerificationSummary,
+  MethodRunResult,
+  MethodTrainStatus,
+  MethodType,
+  TrainMethodType,
+  LiveMoversOut,
   OptionChain,
   RefreshResult,
   ScreenerRow,
@@ -47,6 +56,8 @@ export const api = {
     min_score?: number;
     sector?: string;
     limit?: number;
+    include_invalidated?: boolean;
+    live_status?: string;
   }) => http.get<ScreenerRow[]>("/screener", { params }).then((r) => r.data),
 
   categories: (top_n = 3) =>
@@ -175,4 +186,57 @@ export const liveApi = {
       .then((r) => r.data),
 
   tick: () => http.post<LiveTickOut>(`${liveBase}/tick`).then((r) => r.data),
+};
+
+// =====================================================
+// Method Analysis API (demo comparison page)
+// =====================================================
+const maBase = "/method-analysis";
+
+export const methodAnalysisApi = {
+  train: (method: TrainMethodType) =>
+    http
+      .post<MethodTrainStatus>(`${maBase}/train`, null, { params: { method } })
+      .then((r) => r.data),
+
+  status: () =>
+    http.get<AllMethodStatus>(`${maBase}/status`).then((r) => r.data),
+
+  run: (method: MethodType) =>
+    http
+      .post<MethodRunResult>(`${maBase}/run`, null, { params: { method } })
+      .then((r) => r.data),
+
+  liveMovers: (k = 15) =>
+    http
+      .get<LiveMoversOut>(`${maBase}/live-movers`, { params: { k } })
+      .then((r) => r.data),
+};
+
+// =====================================================
+// Agentic layer (head + worker agents)
+// =====================================================
+const agentsBase = "/v1/agents";
+
+export const agentsApi = {
+  status: () =>
+    http.get<AgentStatusOut>(`${agentsBase}/status`).then((r) => r.data),
+  briefing: () =>
+    http
+      .get<DailyBriefing | null>(`${agentsBase}/briefing/latest`)
+      .then((r) => r.data),
+  briefings: (limit = 10) =>
+    http
+      .get<DailyBriefing[]>(`${agentsBase}/briefings`, { params: { limit } })
+      .then((r) => r.data),
+  runDeep: (use_llm = true) =>
+    http
+      .post<{ status: string; triggered_by?: string; use_llm?: boolean }>(
+        `${agentsBase}/run-deep-cycle`,
+        null,
+        { params: { use_llm } },
+      )
+      .then((r) => r.data),
+  runFast: () =>
+    http.post<FastTickOut>(`${agentsBase}/run-fast-tick`).then((r) => r.data),
 };

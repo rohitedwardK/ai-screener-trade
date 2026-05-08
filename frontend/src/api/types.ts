@@ -558,3 +558,165 @@ export interface LiveTickOut {
   cooldowns_released: number;
   note: string;
 }
+
+// ─── Method Analysis (demo comparison page) ──────────────────────────────────
+
+export type MethodType = "rule_based" | "rf" | "gbm" | "lstm";
+export type TrainMethodType = "rf" | "gbm" | "lstm";
+export type TrainStatusState = "idle" | "training" | "ready" | "error";
+
+export interface MethodTrainStatus {
+  status: TrainStatusState;
+  progress: number;
+  message: string;
+  metric_label: string;
+  metric_value: number | null;
+  error: string | null;
+  updated_at: string | null;
+}
+
+export interface AllMethodStatus {
+  rule_based: MethodTrainStatus;
+  rf: MethodTrainStatus;
+  gbm: MethodTrainStatus;
+  lstm: MethodTrainStatus;
+}
+
+export interface MethodSignalCard {
+  symbol: string;
+  name: string | null;
+  confidence: number;
+  direction: "LONG" | "SHORT" | "NEUTRAL";
+  category: string | null;
+  regime: string;
+  close: number;
+  top_factors: string[];
+}
+
+export interface MethodRunResult {
+  method: MethodType;
+  signals: MethodSignalCard[];
+  ran_at: string;
+  disclaimer: string;
+}
+
+export interface LiveMoverRow {
+  rank: number;
+  symbol: string;
+  name: string | null;
+  last_price: number;
+  pct_change: number;
+  rvol: number;
+  score: number;
+}
+
+export interface LiveMoversOut {
+  movers: LiveMoverRow[];
+  source: "upstox" | "yfinance";
+  fetched_at: string;
+  disclaimer: string;
+}
+
+// ─── Agentic layer (head + worker agents) ────────────────────────────────────
+
+export type AgentCycleType = "DEEP" | "FAST" | "BOOT" | "RETRAIN";
+export type AgentRunStatus =
+  | "RUNNING"
+  | "OK"
+  | "PARTIAL"
+  | "ERROR"
+  | "SKIPPED";
+
+export interface AgentRunRow {
+  id: number;
+  run_at: string;
+  cycle_type: AgentCycleType;
+  status: AgentRunStatus;
+  head_agent_status: AgentRunStatus | null;
+  worker_statuses: Record<string, AgentRunStatus>;
+  duration_s: number | null;
+  triggered_by: string | null;
+  error: string | null;
+}
+
+export interface AgentStatusOut {
+  deep_cycle_running: boolean;
+  deep_cycle_pending: boolean;
+  last_runs: AgentRunRow[];
+  last_deep_cycle_at: string | null;
+}
+
+export type VixBand = "NORMAL" | "ELEVATED" | "PANIC" | "UNKNOWN";
+
+export interface BriefingTopPick {
+  symbol: string;
+  name: string | null;
+  votes: string[];
+  vote_count: number;
+  mean_confidence: number;
+  score: number;
+  confidences: Record<string, number>;
+  directions: Record<string, string>;
+  regime: string | null;
+  close: number | null;
+  categories: string[];
+  invalidation?: number | null;
+  note?: string;
+}
+
+export interface BriefingSectorRow {
+  sector: string;
+  count: number;
+  total_score: number;
+  mean_score: number;
+  top_symbols: { symbol: string; score: number; category: string }[];
+}
+
+export interface BriefingHeadline {
+  title: string;
+  link: string;
+  source: string;
+  published: string | null;
+}
+
+export interface DailyBriefing {
+  id: number;
+  run_at: string;
+  agent_run_id: number | null;
+  regime: string;
+  market_trend: string | null;
+  vix_value: number | null;
+  vix_band: VixBand | null;
+  market_summary_md: string | null;
+  top_picks: BriefingTopPick[];
+  consensus_picks: BriefingTopPick[];
+  sector_rotation: BriefingSectorRow[];
+  news_headlines: BriefingHeadline[];
+  method_outputs: Record<string, unknown>;
+  counters: Record<string, number>;
+  disclaimer: string;
+}
+
+export interface FastTickOut {
+  ran_at: string;
+  movers_count: number;
+  invalidations: { symbol: string; direction: string; invalidation: number; live_price: number; reason: string }[];
+  new_movers: string[];
+  triggered_deep_cycle: boolean;
+  note: string;
+}
+
+export const AGENT_STATUS_TONE: Record<AgentRunStatus, "green" | "amber" | "red" | "blue" | "default"> = {
+  OK: "green",
+  RUNNING: "blue",
+  PARTIAL: "amber",
+  ERROR: "red",
+  SKIPPED: "default",
+};
+
+export const AGENT_LABEL: Record<string, string> = {
+  data_agent: "Data Agent",
+  analysis_agent: "Analysis Agent",
+  context_agent: "Context Agent",
+  head_agent: "Head Agent",
+};

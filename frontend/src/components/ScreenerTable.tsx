@@ -17,14 +17,15 @@ type SortKey =
   | "close"
   | "rsi"
   | "adx"
-  | "atr_pct";
+  | "atr_pct"
+  | "live";
 
 const HEADERS: { key: SortKey | null; label: string; align?: "right" }[] = [
   { key: "symbol", label: "Symbol" },
   { key: null, label: "Sector" },
   { key: null, label: "Regime" },
   { key: null, label: "Category" },
-  { key: null, label: "Live" },
+  { key: "live", label: "Live" },
   { key: "score", label: "Score", align: "right" },
   { key: "confidence", label: "Conf", align: "right" },
   { key: "close", label: "Live / Run close", align: "right" },
@@ -33,6 +34,17 @@ const HEADERS: { key: SortKey | null; label: string; align?: "right" }[] = [
   { key: "atr_pct", label: "ATR%", align: "right" },
   { key: null, label: "Entry/Stop/Target", align: "right" },
 ];
+
+// Higher = more bullish on the persisted thesis. Used by the "Live" column
+// sort so STRENGTHENED floats to the top, INVALIDATED sinks to the bottom,
+// and rows with no verification land in the middle (tone-neutral).
+const LIVE_RANK: Record<string, number> = {
+  STRENGTHENED: 4,
+  CONFIRMED: 3,
+  WEAKENING: 1,
+  INVALIDATED: 0,
+};
+const LIVE_RANK_NULL = 2;
 
 export function ScreenerTable({
   rows,
@@ -49,12 +61,18 @@ export function ScreenerTable({
     const livePriceFor = (sym: string, fallback: number) =>
       livePrices?.[sym] ?? fallback;
 
+    const liveRank = (row: ScreenerRow) =>
+      row.live ? LIVE_RANK[row.live.status] ?? LIVE_RANK_NULL : LIVE_RANK_NULL;
+
     copy.sort((a, b) => {
       let av: number | string;
       let bv: number | string;
       if (sortKey === "close") {
         av = livePriceFor(a.symbol, a.close);
         bv = livePriceFor(b.symbol, b.close);
+      } else if (sortKey === "live") {
+        av = liveRank(a);
+        bv = liveRank(b);
       } else {
         av = (a[sortKey] ?? 0) as number | string;
         bv = (b[sortKey] ?? 0) as number | string;
