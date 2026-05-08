@@ -48,20 +48,26 @@ STRENGTHENED` row used by the dashboard pills. Lives in
 `backend/app/api/live_verification.py`.
 
 4. **Agentic layer (head + worker agents).** A head agent delegates work
-   to four specialists (Data, Analysis, Market Context, Monitoring) and
-   produces a daily briefing the dashboard renders. The deep cycle
-   (refresh → score across all 4 methods → context → synthesis) repeats
-   every `AGENTIC_DEEP_CYCLE_MIN` (default 15 min) during NSE hours; a
-   deterministic 60-sec fast monitor wakes the deep cycle on
-   invalidation breaches or new top movers. The head agent's only
-   LLM-touched task is writing the markdown briefing — everything
-   structured (top picks, sector rotation, etc.) is built by
-   deterministic Python and is therefore always trustworthy. LLM is
-   local Ollama (`llama3.2:latest` by default), called via plain httpx
-   to keep the dependency surface minimal. Lives in
+   to five specialists (Data, Analysis, Market Context, Informant,
+   Monitoring) and produces a daily briefing the dashboard renders. The
+   deep cycle (refresh → score across all 4 methods → context → events →
+   synthesis) repeats every `AGENTIC_DEEP_CYCLE_MIN` (default 15 min)
+   during NSE hours; a deterministic 60-sec fast monitor wakes the deep
+   cycle on invalidation breaches or new top movers. The InformantAgent
+   scans the next `AGENTIC_INFORMANT_DAYS_AHEAD` days (default 5) for
+   earnings, ex-dividends, F&O monthly expiries, and macro events
+   (RBI MPC, Fed FOMC, monthly auto sales) — affected stocks get tagged
+   on the briefing's top-picks table so the operator knows where higher
+   volatility is expected. The head agent's only LLM-touched task is
+   writing the markdown briefing — everything structured (top picks,
+   sector rotation, events, etc.) is built by deterministic Python and
+   is therefore always trustworthy. LLM is local Ollama
+   (`llama3.2:latest` by default), called via plain httpx to keep the
+   dependency surface minimal. Lives in
    `backend/app/agents/{tools,data_agent,analysis_agent,context_agent,
-   monitoring_agent,orchestrator,scheduler_jobs,llm}.py`,
-   `backend/app/api/agents.py`, `backend/app/models/agent_orm.py`, and
+   informant_agent,monitoring_agent,orchestrator,scheduler_jobs,llm}.py`,
+   `backend/app/data/event_calendar.py`, `backend/app/api/agents.py`,
+   `backend/app/models/agent_orm.py`, and
    `frontend/src/{pages/Agents.tsx,components/agents/*}`. Configured by
    `AGENTIC_*` + `INDIA_VIX_*` + `NEWS_RSS_FEEDS` in `.env`.
 

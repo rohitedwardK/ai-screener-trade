@@ -95,6 +95,11 @@ class DailyBriefing(Base):
     news_headlines_json = Column(JSON, nullable=False, default=list)
     method_outputs_json = Column(JSON, nullable=False, default=dict)
     counters_json = Column(JSON, nullable=False, default=dict)
+    # Added in the InformantAgent rollout. `init_db` ALTERs SQLite to add
+    # this column on existing DBs (additive only — no manual migration).
+    # Nullable so the SQLite ALTER works on a populated table; the Python
+    # default still produces `[]` on every fresh row.
+    upcoming_events_json = Column(JSON, nullable=True, default=list)
 
     disclaimer = Column(
         String,

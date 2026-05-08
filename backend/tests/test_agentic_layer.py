@@ -194,6 +194,7 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
         analysis_agent,
         context_agent,
         data_agent,
+        informant_agent,
         llm as llm_mod,
         orchestrator,
     )
@@ -234,6 +235,24 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
              "published": "Mon"},
         ],
     })
+    # Informant agent: return one earnings event tied to RELIANCE so we can
+    # assert the orchestrator stitched `upcoming_event` onto the top pick.
+    monkeypatch.setattr(informant_agent, "run_deterministic", lambda days_ahead=None: {
+        "events": [
+            {
+                "date": "2026-05-12",
+                "days_until": 4,
+                "category": "EARNINGS",
+                "title": "Earnings — Reliance",
+                "symbols": ["RELIANCE.NS"],
+                "source": "yfinance",
+                "impact": "HIGH",
+            }
+        ],
+        "watch_symbols": ["RELIANCE.NS"],
+        "days_ahead": 5,
+        "fetched_at": "2026-05-08T12:00:00+00:00",
+    })
 
     # Force the LLM path to be unavailable so we exercise the deterministic
     # markdown stitcher.
@@ -252,8 +271,18 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
     assert result.worker_statuses["data_agent"] == "OK"
     assert result.worker_statuses["analysis_agent"] == "OK"
     assert result.worker_statuses["context_agent"] == "OK"
+    assert result.worker_statuses["informant_agent"] == "OK"
     assert result.worker_statuses["head_agent"] == "PARTIAL"
     assert result.disclaimer == DISCLAIMER
+
+    # Informant output was stitched into both the briefing payload and the
+    # top pick that matches the affected symbol.
+    assert len(result.upcoming_events) == 1
+    assert result.upcoming_events[0]["category"] == "EARNINGS"
+    assert result.top_picks[0]["upcoming_event"]["category"] == "EARNINGS"
+    assert result.top_picks[0]["upcoming_event"]["days_until"] == 4
+    # And the deterministic markdown surfaces the events section.
+    assert "Upcoming events" in result.market_summary_md
 
     # And confirm the briefing was persisted.
     from sqlalchemy import select
@@ -267,6 +296,8 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
         assert briefings[0].regime == "RISK_ON"
         assert briefings[0].vix_band == "NORMAL"
         assert briefings[0].top_picks_json[0]["symbol"] == "RELIANCE.NS"
+        assert len(briefings[0].upcoming_events_json or []) == 1
+        assert briefings[0].upcoming_events_json[0]["title"] == "Earnings — Reliance"
 
 
 # ---------------------------------------------------------------------------

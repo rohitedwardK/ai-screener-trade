@@ -648,6 +648,40 @@ export interface AgentStatusOut {
 
 export type VixBand = "NORMAL" | "ELEVATED" | "PANIC" | "UNKNOWN";
 
+export type EventCategory = "EARNINGS" | "DIVIDEND" | "EXPIRY" | "MACRO";
+export type EventImpact = "HIGH" | "MEDIUM" | "LOW";
+
+export interface UpcomingEvent {
+  date: string;
+  days_until: number;
+  category: EventCategory;
+  title: string;
+  symbols: string[];
+  source: string;
+  impact: EventImpact;
+}
+
+export const EVENT_IMPACT_TONE: Record<EventImpact, "red" | "amber" | "blue"> = {
+  HIGH: "red",
+  MEDIUM: "amber",
+  LOW: "blue",
+};
+
+export const EVENT_CATEGORY_LABEL: Record<EventCategory, string> = {
+  EARNINGS: "Earnings",
+  DIVIDEND: "Ex-dividend",
+  EXPIRY: "F&O expiry",
+  MACRO: "Macro",
+};
+
+export interface PickUpcomingEvent {
+  category: EventCategory | null;
+  title: string | null;
+  date: string | null;
+  days_until: number | null;
+  impact: EventImpact | null;
+}
+
 export interface BriefingTopPick {
   symbol: string;
   name: string | null;
@@ -662,6 +696,7 @@ export interface BriefingTopPick {
   categories: string[];
   invalidation?: number | null;
   note?: string;
+  upcoming_event?: PickUpcomingEvent;
 }
 
 export interface BriefingSectorRow {
@@ -694,6 +729,7 @@ export interface DailyBriefing {
   news_headlines: BriefingHeadline[];
   method_outputs: Record<string, unknown>;
   counters: Record<string, number>;
+  upcoming_events: UpcomingEvent[];
   disclaimer: string;
 }
 
@@ -718,5 +754,6 @@ export const AGENT_LABEL: Record<string, string> = {
   data_agent: "Data Agent",
   analysis_agent: "Analysis Agent",
   context_agent: "Context Agent",
+  informant_agent: "Informant Agent",
   head_agent: "Head Agent",
 };

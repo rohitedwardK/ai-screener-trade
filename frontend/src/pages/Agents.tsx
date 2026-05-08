@@ -34,6 +34,12 @@ const WORKER_AGENTS = [
       "Reads India VIX, market regime, sector rotation, and headlines from MoneyControl + Economic Times RSS feeds.",
   },
   {
+    key: "informant_agent",
+    label: "Informant Agent",
+    description:
+      "Scans the next 5 days for earnings, ex-dividends, F&O monthly expiry, and macro events (RBI MPC, Fed FOMC, monthly auto sales). Tags affected stocks for closer attention.",
+  },
+  {
     key: "head_agent",
     label: "Head Agent",
     description:
@@ -101,10 +107,12 @@ export function Agents() {
           )}
         </div>
         <p className="text-fg-muted text-sm mt-1">
-          A head agent delegates work to four specialists. The deep cycle
-          (refresh → score → context → synthesise) repeats every 15 min during
-          NSE hours; a deterministic 60-sec monitor refreshes movers and wakes
-          the deep cycle on invalidation breaches or new top movers.
+          A head agent delegates work to four specialists (data, analysis,
+          context, informant). The deep cycle
+          (refresh → score → context → events → synthesise) repeats every
+          15 min during NSE hours; a deterministic 60-sec monitor refreshes
+          movers and wakes the deep cycle on invalidation breaches or new
+          top movers.
         </p>
       </div>
 
@@ -152,7 +160,7 @@ export function Agents() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {WORKER_AGENTS.map((cfg) => (
           <AgentStatusCard
             key={cfg.key}

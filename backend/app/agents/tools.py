@@ -45,7 +45,7 @@ from ..core import live_verification as live_verif_core
 from ..core.index_pipeline import refresh_intraday as run_index_intraday_refresh
 from ..core.pipeline import run_full_refresh
 from ..core.universe import all_symbols, stock_meta
-from ..data import csv_store, news_rss, vix as vix_data
+from ..data import csv_store, event_calendar, news_rss, vix as vix_data
 from ..db import session_scope
 from ..live_analysis import movers as movers_mod
 from ..live_analysis import regime as regime_mod
@@ -418,6 +418,47 @@ def check_invalidations_impl(prev_top_picks: List[Dict[str, Any]]) -> List[Dict[
         return [{"error": str(exc)}]
 
 
+# ---------------------------------------------------------------------------
+# Informant tool — upcoming events (earnings, ex-div, F&O expiry, macro)
+# ---------------------------------------------------------------------------
+def upcoming_events_impl(days_ahead: int = 5) -> Dict[str, Any]:
+    """Return the next-N-days event calendar for the Nifty 50 universe.
+
+    Wraps `data.event_calendar.fetch_upcoming_events`, which combines
+    yfinance per-symbol earnings/ex-dividend dates with a static macro
+    registry (RBI MPC, Fed FOMC, monthly auto sales) and computed F&O
+    monthly expiries. Events are deduped, date-sorted, and clamped to
+    the lookahead window.
+
+    Errors are swallowed into the response so the orchestrator's deep
+    cycle never fails on a yfinance hiccup.
+    """
+    try:
+        name_map = {m["symbol"]: m["name"] for m in stock_meta()}
+        symbols = all_symbols()
+        events = event_calendar.fetch_upcoming_events(
+            symbols=symbols,
+            name_map=name_map,
+            days_ahead=int(days_ahead),
+        )
+        # Aggregate the union of symbols across all events for the dashboard
+        # "watch list" — these are the stocks that are likely to move.
+        watch: List[str] = []
+        for ev in events:
+            for s in ev.symbols:
+                if s != "MARKET" and s not in watch:
+                    watch.append(s)
+        return {
+            "events": [ev.to_dict() for ev in events],
+            "watch_symbols": watch,
+            "days_ahead": int(days_ahead),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.exception("upcoming_events_impl failed")
+        return {"events": [], "watch_symbols": [], "error": str(exc)}
+
+
 def latest_snapshot_close_impl(symbol: str) -> Optional[float]:
     """Helper used by the head agent's stitch path to backfill close prices
     for picks that lack a `close` field."""
@@ -450,4 +491,5 @@ __all__ = [
     "refresh_verification_impl",
     "check_invalidations_impl",
     "latest_snapshot_close_impl",
+    "upcoming_events_impl",
 ]

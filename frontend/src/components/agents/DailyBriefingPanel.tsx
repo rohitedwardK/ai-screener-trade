@@ -1,7 +1,8 @@
-import { Activity, AlertTriangle, ExternalLink, Newspaper, RefreshCcw, Sparkles, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, CalendarClock, ExternalLink, Newspaper, RefreshCcw, Sparkles, TrendingUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/api/client";
-import type { DailyBriefing, VixBand } from "@/api/types";
+import type { DailyBriefing, EventImpact, UpcomingEvent, VixBand } from "@/api/types";
+import { EVENT_CATEGORY_LABEL, EVENT_IMPACT_TONE } from "@/api/types";
 import { fmt, symbolDisplay } from "@/lib/format";
 
 const VIX_BAND_TONE: Record<VixBand, string> = {
@@ -16,6 +17,12 @@ const REGIME_TONE: Record<string, string> = {
   NEUTRAL: "bg-bg-elevated text-fg",
   RISK_OFF: "bg-accent-red/15 text-accent-red",
   UNKNOWN: "bg-bg-elevated text-fg-muted",
+};
+
+const IMPACT_BADGE_CLASS: Record<EventImpact, string> = {
+  HIGH: "bg-accent-red/15 text-accent-red border-accent-red/30",
+  MEDIUM: "bg-accent-amber/15 text-accent-amber border-accent-amber/30",
+  LOW: "bg-accent-blue/15 text-accent-blue border-accent-blue/30",
 };
 
 export interface DailyBriefingPanelProps {
@@ -111,6 +118,12 @@ function CompactBriefing({ briefing, onRefresh, fetching }: {
       <span className="text-[11px] text-fg-muted">
         Top picks: <span className="text-fg num">{briefing.top_picks.length}</span>
       </span>
+      {briefing.upcoming_events && briefing.upcoming_events.length > 0 && (
+        <span className="text-[11px] text-fg-muted flex items-center gap-1">
+          <CalendarClock className="size-3.5 text-accent-violet" />
+          Events 5d: <span className="text-fg num">{briefing.upcoming_events.length}</span>
+        </span>
+      )}
       <button
         type="button"
         className="btn ml-auto text-xs"
@@ -222,7 +235,24 @@ function FullBriefing({
               <tbody>
                 {briefing.top_picks.map((p) => (
                   <tr key={p.symbol} className="border-b border-border/60 last:border-0">
-                    <td className="py-1.5 pr-2 font-medium">{symbolDisplay(p.symbol)}</td>
+                    <td className="py-1.5 pr-2 font-medium">
+                      <div className="flex items-center gap-1.5">
+                        {symbolDisplay(p.symbol)}
+                        {p.upcoming_event && p.upcoming_event.category && (
+                          <span
+                            title={`${p.upcoming_event.title ?? ""} (${p.upcoming_event.date ?? ""})`}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                              IMPACT_BADGE_CLASS[(p.upcoming_event.impact ?? "LOW") as EventImpact]
+                            }`}
+                          >
+                            {EVENT_CATEGORY_LABEL[p.upcoming_event.category]}
+                            {p.upcoming_event.days_until != null
+                              ? ` ${p.upcoming_event.days_until === 0 ? "today" : `${p.upcoming_event.days_until}d`}`
+                              : ""}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-1.5 pr-2 text-[11px] text-fg-muted">
                       {p.vote_count}/4 · {p.votes.join(", ")}
                     </td>
@@ -270,6 +300,8 @@ function FullBriefing({
         </div>
       </div>
 
+      <UpcomingEventsCard events={briefing.upcoming_events ?? []} />
+
       <div className="card p-4">
         <div className="flex items-center gap-2 mb-3">
           <Newspaper className="size-4 text-accent-cyan" />
@@ -301,6 +333,56 @@ function FullBriefing({
       </div>
 
       <p className="text-[11px] text-fg-subtle">{briefing.disclaimer}</p>
+    </div>
+  );
+}
+
+function UpcomingEventsCard({ events }: { events: UpcomingEvent[] }) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <CalendarClock className="size-4 text-accent-violet" />
+        <h3 className="font-semibold text-sm">Upcoming events (next 5 days)</h3>
+        <span className="text-[11px] text-fg-subtle">
+          {events.length} {events.length === 1 ? "event" : "events"} · expect higher volatility
+        </span>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-sm text-fg-muted">
+          No earnings, ex-dividends, F&amp;O expiries or macro prints in the next 5 days.
+        </p>
+      ) : (
+        <ul className="space-y-2 text-[13px]">
+          {events.map((ev) => {
+            const tone = EVENT_IMPACT_TONE[ev.impact] ?? "blue";
+            const badgeClass = IMPACT_BADGE_CLASS[ev.impact] ?? IMPACT_BADGE_CLASS.LOW;
+            const visibleSyms = ev.symbols.slice(0, 4);
+            const extra = ev.symbols.length - visibleSyms.length;
+            return (
+              <li
+                key={`${ev.date}-${ev.category}-${ev.title}`}
+                className="flex flex-wrap items-start gap-2 border-b border-border/40 pb-2 last:border-0 last:pb-0"
+              >
+                <span className={`px-1.5 py-0.5 rounded text-[10px] border shrink-0 ${badgeClass}`}>
+                  {ev.impact}
+                </span>
+                <span className="text-[11px] text-fg-subtle shrink-0 num">
+                  {ev.date} ({ev.days_until === 0 ? "today" : `${ev.days_until}d`})
+                </span>
+                <span className="text-fg">
+                  <span className="font-medium">{EVENT_CATEGORY_LABEL[ev.category]}</span>
+                  {" — "}
+                  {ev.title}
+                </span>
+                <span className={`text-[11px] ml-auto text-accent-${tone}`}>
+                  {visibleSyms.map((s) => (s === "MARKET" ? "Market-wide" : symbolDisplay(s))).join(", ")}
+                  {extra > 0 ? ` +${extra}` : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

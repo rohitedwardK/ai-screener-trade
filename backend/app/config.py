@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     AGENTIC_LLM_BASE_URL: str = "http://localhost:11434/v1"
     AGENTIC_LLM_API_KEY: str = "ollama"
     AGENTIC_LLM_TIMEOUT_SEC: int = 240
+    # Informant agent lookahead window for upcoming events. Default 5 days
+    # matches the original product brief ("today + within 5 days"). Bump if
+    # you want a longer earnings preview; events past this horizon are
+    # silently dropped.
+    AGENTIC_INFORMANT_DAYS_AHEAD: int = 5
     # India VIX bands. Anything below HIGH is "NORMAL"; >=HIGH and <PANIC is
     # "ELEVATED"; >=PANIC is "PANIC". Values informed by NSE long-run
     # distribution (median ~13, 75th pctile ~17, crisis spikes >25).

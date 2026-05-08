@@ -66,6 +66,7 @@ class BriefingOut(BaseModel):
     news_headlines: List[Dict[str, Any]] = []
     method_outputs: Dict[str, Any] = {}
     counters: Dict[str, Any] = {}
+    upcoming_events: List[Dict[str, Any]] = []
     disclaimer: str
 
 
@@ -99,6 +100,7 @@ def _serialize_briefing(row: DailyBriefing) -> BriefingOut:
         news_headlines=list(row.news_headlines_json or []),
         method_outputs=dict(row.method_outputs_json or {}),
         counters=dict(row.counters_json or {}),
+        upcoming_events=list(row.upcoming_events_json or []),
         disclaimer=row.disclaimer,
     )
 
