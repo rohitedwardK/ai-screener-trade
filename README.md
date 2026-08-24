@@ -13,6 +13,13 @@ Nifty / Sensex and an optional Upstox-backed Live Analysis mode.
 > no decision engine, no order simulator, no ledger. The app is read-only
 > analysis: screener + index analysis + live verification + live observation.
 
+> **Live Market child app.** A standalone FastAPI + React service in
+> [`live-market/`](live-market/README.md) runs on ports `:8001` / `:5174`
+> and emits 5-15 min scalp setups when an index is RANGE_BOUND or 2-3 day
+> swing setups when it is TRENDING. Same hard rules apply (read-only,
+> invalidation level on every plan, disclaimer verbatim). Boot with
+> `start-live-market.bat` / shut down with `stop-live-market.bat`.
+
 ---
 
 ## Features
@@ -343,8 +350,8 @@ Coverage:
 - **Nifty 50 changes semi-annually.** Update
   [`backend/app/core/universe.py`](backend/app/core/universe.py) using the
   official factsheet at niftyindices.com when constituents change.
-- **Two known flaky tickers** at the time of writing: `LTIM.NS` and
-  `TATAMOTORS.NS` periodically return Yahoo's "possibly delisted" error.
+- **Two known flaky tickers** at the time of writing: `LTM.NS` and
+  `TMPV.NS` periodically return Yahoo's "possibly delisted" error.
   The pipeline isolates these failures and continues — the other 48
   symbols are unaffected.
 - **Daily candles only** for the screener. yfinance imposes tight history

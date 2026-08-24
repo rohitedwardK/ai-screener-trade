@@ -10,8 +10,12 @@ A directory-by-directory map of the codebase. Pair this with
 ├── START.readme.md       ← manual start guide & troubleshooting
 ├── render.yaml           ← Render Blueprint (cloud deploy)
 ├── .cursor/rules/        ← scoped Cursor rules (.mdc)
+├── start.bat / stop.bat  ← daily start/stop for the parent app
+├── start-live-market.bat / stop-live-market.bat  ← daily start/stop for the Live Market child app
 ├── backend/              ← FastAPI service (Python 3.12)
-└── frontend/             ← React 18 dashboard (Vite + TS)
+├── frontend/             ← React 18 dashboard (Vite + TS)
+└── live-market/          ← Live Market child app (FastAPI :8001 + React :5174)
+                            see live-market/README.md for the full layout
 ```
 
 ---

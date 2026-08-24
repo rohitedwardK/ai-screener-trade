@@ -209,7 +209,7 @@ curl.exe "http://127.0.0.1:8000/v1/live-analysis/decisions?limit=20"
 | --- | --- |
 | Frontend shows "Backend unreachable" | Backend is not running, or running on a different port. Start step 1. |
 | `ModuleNotFoundError: No module named 'pytest'` | The venv is not active or the package isn't installed. Activate venv and rerun `pip install -r requirements.txt`. |
-| `yfinance` 429 / "possibly delisted" on a few symbols | Yahoo rate limiting. Two known flaky tickers: `LTIM.NS`, `TATAMOTORS.NS`. The pipeline isolates these — others continue. |
+| `yfinance` 429 / "possibly delisted" on a few symbols | Yahoo rate limiting. Two known flaky tickers: `LTM.NS`, `TMPV.NS`. The pipeline isolates these — others continue. |
 | Frontend port already in use | See section 3 above. |
 | Daily refresh didn't run at 18:30 IST | The scheduler runs only when the backend is running. Check `app.core.scheduler` log lines on startup. |
 | `/indices/{symbol}/option-chain` returns 503 | NSE rate-limiting / cookie-warming failed AND yfinance fallback returned no data. Wait 1-2 minutes and retry; the chain is also memo-cached for 60s in-process. |

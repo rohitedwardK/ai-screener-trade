@@ -79,6 +79,21 @@ processes in their own windows, and opens the browser. The agentic boot
 cycle runs automatically inside the backend's lifespan, so no manual
 trigger is needed. Both scripts are idempotent.
 
+### Live Market child app (separate service)
+
+A sibling top-level directory [`live-market/`](live-market/README.md)
+ships an independent FastAPI + React service on ports `:8001` / `:5174`
+that focuses on **intraday regime classification + scalp/swing setups**
+for the three indices (`^NSEI` / `^NSEBANK` / `^BSESN`). Polls Upstox
+once per minute, classifies each index as `TRENDING_UP`, `TRENDING_DOWN`,
+`RANGE_BOUND`, or `CHOPPY`, then emits scalp setups (5-15 min, range
+only) or swing setups (2-3 day, trending only) with ATM CE/PE option
+plans where the chain is available (Sensex is spot-only). Read-only -
+no orders, no automation, same hard rules as the parent app. Reuses the
+parent's `.env` for `UPSTOX_*` keys and the parent's daily index OHLCV
+CSV cache via `INDEX_DATA_DIR`. Boot via `start-live-market.bat` /
+`stop-live-market.bat`.
+
 > ## Hard rules — never violate
 > - **No autonomous trading bots.** Paper-trading bots (stock + index)
 >   were removed from this app. Do not reintroduce decision engines,

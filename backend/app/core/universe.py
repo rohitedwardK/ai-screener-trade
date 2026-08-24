@@ -32,7 +32,7 @@ NIFTY_50: List[Tuple[str, str, str]] = [
     ("NTPC.NS", "NTPC Ltd.", "Power"),
     ("NESTLEIND.NS", "Nestle India Ltd.", "FMCG"),
     ("POWERGRID.NS", "Power Grid Corporation of India Ltd.", "Power"),
-    ("TATAMOTORS.NS", "Tata Motors Ltd.", "Auto"),
+    ("TMPV.NS", "Tata Motors Passenger Vehicles Ltd.", "Auto"),
     ("WIPRO.NS", "Wipro Ltd.", "IT"),
     ("BAJAJFINSV.NS", "Bajaj Finserv Ltd.", "Financial Services"),
     ("ONGC.NS", "Oil and Natural Gas Corporation Ltd.", "Energy"),
@@ -57,7 +57,7 @@ NIFTY_50: List[Tuple[str, str, str]] = [
     ("SBILIFE.NS", "SBI Life Insurance Company Ltd.", "Financial Services"),
     ("HDFCLIFE.NS", "HDFC Life Insurance Company Ltd.", "Financial Services"),
     ("BPCL.NS", "Bharat Petroleum Corporation Ltd.", "Energy"),
-    ("LTIM.NS", "LTIMindtree Ltd.", "IT"),
+    ("LTM.NS", "LTM Ltd.", "IT"),
     ("SHRIRAMFIN.NS", "Shriram Finance Ltd.", "Financial Services"),
 ]
 

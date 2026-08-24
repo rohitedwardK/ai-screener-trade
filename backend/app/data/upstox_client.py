@@ -68,7 +68,7 @@ NIFTY50_INSTRUMENT_KEYS: Dict[str, str] = {
     "NTPC.NS":       "NSE_EQ|INE733E01010",
     "NESTLEIND.NS":  "NSE_EQ|INE239A01024",
     "POWERGRID.NS":  "NSE_EQ|INE752E01010",
-    "TATAMOTORS.NS": "NSE_EQ|INE155A01022",
+    "TMPV.NS":       "NSE_EQ|INE155A01022",
     "WIPRO.NS":      "NSE_EQ|INE075A01022",
     "BAJAJFINSV.NS": "NSE_EQ|INE918I01026",
     "ONGC.NS":       "NSE_EQ|INE213A01029",
@@ -93,7 +93,7 @@ NIFTY50_INSTRUMENT_KEYS: Dict[str, str] = {
     "SBILIFE.NS":    "NSE_EQ|INE123W01016",
     "HDFCLIFE.NS":   "NSE_EQ|INE795G01014",
     "BPCL.NS":       "NSE_EQ|INE029A01011",
-    "LTIM.NS":       "NSE_EQ|INE214T01019",
+    "LTM.NS":        "NSE_EQ|INE214T01019",
     "SHRIRAMFIN.NS": "NSE_EQ|INE721A01013",
     # Spot indices (regime classifier + paper-index bot underlying).
     "^NSEI":         "NSE_INDEX|Nifty 50",
