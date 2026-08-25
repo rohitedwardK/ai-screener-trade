@@ -7,6 +7,7 @@ import { LiveAnalysis } from "@/pages/LiveAnalysis";
 import { MethodAnalysis } from "@/pages/MethodAnalysis";
 import { Screener } from "@/pages/Screener";
 import { StockDetail } from "@/pages/StockDetail";
+import { Trades } from "@/pages/Trades";
 import { useAppMode } from "@/lib/appMode";
 
 /**
@@ -26,6 +27,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<HomeForCurrentMode />} />
         <Route path="screener" element={<Screener />} />
+        <Route path="trades" element={<Trades />} />
         <Route path="stock/:symbol" element={<StockDetail />} />
         <Route path="indices" element={<IndexAnalysis />} />
         <Route path="indices/:symbol" element={<IndexAnalysis />} />

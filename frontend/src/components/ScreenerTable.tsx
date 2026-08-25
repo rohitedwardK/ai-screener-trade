@@ -8,6 +8,11 @@ import {
   LIVE_STATUS_TONE,
 } from "@/api/types";
 import type { LiveVerification, ScreenerRow } from "@/api/types";
+import {
+  DEFAULT_QTY,
+  openTradeForSymbol,
+  usePaperTrades,
+} from "@/lib/paperTrades";
 import { ArrowDown, ArrowUp, TrendingDown, TrendingUp } from "lucide-react";
 
 type SortKey =
@@ -33,6 +38,7 @@ const HEADERS: { key: SortKey | null; label: string; align?: "right" }[] = [
   { key: "adx", label: "ADX", align: "right" },
   { key: "atr_pct", label: "ATR%", align: "right" },
   { key: null, label: "Entry/Stop/Target", align: "right" },
+  { key: null, label: "Paper trade", align: "right" },
 ];
 
 // Higher = more bullish on the persisted thesis. Used by the "Live" column
@@ -185,6 +191,9 @@ export function ScreenerTable({
                     "—"
                   )}
                 </td>
+                <td className="px-3 py-2 text-right">
+                  <TradeActionCell row={r} live={livePrices?.[r.symbol]} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -227,6 +236,63 @@ function LiveStatusCell({ live }: { live: LiveVerification | null }) {
     <span title={tooltipLines.join("\n")}>
       <Badge tone={LIVE_STATUS_TONE[live.status]}>{label}</Badge>
     </span>
+  );
+}
+
+function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
+  const trades = usePaperTrades((s) => s.trades);
+  const buy = usePaperTrades((s) => s.buy);
+  const sell = usePaperTrades((s) => s.sell);
+
+  const hasLive = live != null && Number.isFinite(live);
+  const price = hasLive ? (live as number) : row.close;
+  const open = openTradeForSymbol(trades, row.symbol);
+
+  if (open) {
+    const pnl = (price - open.buyPrice) * open.quantity;
+    const tone = pnl > 0 ? "text-accent-green" : pnl < 0 ? "text-accent-red" : "text-fg-muted";
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <button
+          type="button"
+          onClick={() => sell(open.id, price)}
+          className="inline-flex items-center gap-1 rounded-md border border-accent-red/40 bg-accent-red/10 px-2 py-1 text-xs font-medium text-accent-red hover:bg-accent-red/20"
+          title={`Sell ${open.quantity} @ ${fmt.inr(price)} (bought @ ${fmt.inr(open.buyPrice)})`}
+        >
+          <TrendingDown className="size-3" />
+          Sell {open.quantity}
+        </button>
+        <span className={`text-[10px] num ${tone}`}>
+          {pnl >= 0 ? "+" : ""}
+          {fmt.inr(pnl)}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        buy({
+          symbol: row.symbol,
+          name: row.name,
+          category: row.category,
+          scoreAtBuy: row.score,
+          entry: row.entry,
+          stopLoss: row.stop_loss,
+          target1: row.target_1,
+          target2: row.target_2,
+          invalidation: row.invalidation,
+          price,
+        })
+      }
+      className="inline-flex items-center gap-1 rounded-md border border-accent-green/40 bg-accent-green/10 px-2 py-1 text-xs font-medium text-accent-green hover:bg-accent-green/20"
+      title={`Buy ${DEFAULT_QTY} @ ${fmt.inr(price)} (paper trade)`}
+    >
+      <TrendingUp className="size-3" />
+      Buy {DEFAULT_QTY}
+    </button>
   );
 }
 

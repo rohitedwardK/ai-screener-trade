@@ -11,7 +11,7 @@ import type {
   TrainMethodType,
 } from "@/api/types";
 import { MethodSignalCard } from "@/components/MethodSignalCard";
-import { fmt, symbolDisplay } from "@/lib/format";
+import { fmt, formatTimeIST, symbolDisplay } from "@/lib/format";
 
 // ─── Column config ────────────────────────────────────────────────────────────
 
@@ -279,7 +279,7 @@ function MethodColumn({
           <div className="flex items-center justify-between text-[11px] text-fg-subtle">
             <span>{result.signals.length} signals · sorted by confidence</span>
             <span className="num">
-              {new Date(result.ran_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+              {formatTimeIST(result.ran_at)} IST
             </span>
           </div>
           {liveOverlap && (

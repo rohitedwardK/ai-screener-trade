@@ -11,6 +11,7 @@ import {
 import { agentsApi } from "@/api/client";
 import type { AgentRunRow, AgentRunStatus } from "@/api/types";
 import { AGENT_LABEL } from "@/api/types";
+import { formatDateTimeIST, formatTimeIST } from "@/lib/format";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { DailyBriefingPanel } from "@/components/agents/DailyBriefingPanel";
 
@@ -145,14 +146,14 @@ export function Agents() {
         </button>
         {status?.last_deep_cycle_at && (
           <span className="text-[11px] text-fg-subtle ml-1">
-            Last deep cycle: {new Date(status.last_deep_cycle_at).toLocaleString("en-IN")}
+            Last deep cycle: {formatDateTimeIST(status.last_deep_cycle_at)} IST
           </span>
         )}
       </div>
 
       {runFastMut.data && (
         <div className="card p-3 text-[12px] text-fg-muted">
-          Fast tick @ {new Date(runFastMut.data.ran_at).toLocaleTimeString("en-IN")} ·{" "}
+          Fast tick @ {formatTimeIST(runFastMut.data.ran_at, true)} IST ·{" "}
           {runFastMut.data.movers_count} movers · {runFastMut.data.note}
           {runFastMut.data.triggered_deep_cycle && (
             <span className="ml-1 text-accent-amber">→ deep cycle queued</span>
@@ -208,11 +209,7 @@ export function Agents() {
               {runs.map((r) => (
                 <tr key={r.id} className="border-b border-border/60 last:border-0">
                   <td className="py-1.5 pr-2 num">
-                    {new Date(r.run_at).toLocaleTimeString("en-IN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })}
+                    {formatTimeIST(r.run_at, true)}
                   </td>
                   <td className="py-1.5 pr-2 text-[11px] uppercase tracking-wide">
                     {r.cycle_type}

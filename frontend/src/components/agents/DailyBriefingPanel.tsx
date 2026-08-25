@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/api/client";
 import type { DailyBriefing, EventImpact, UpcomingEvent, VixBand } from "@/api/types";
 import { EVENT_CATEGORY_LABEL, EVENT_IMPACT_TONE } from "@/api/types";
-import { fmt, symbolDisplay } from "@/lib/format";
+import { fmt, formatDateTimeIST, formatTimeIST, symbolDisplay } from "@/lib/format";
 
 const VIX_BAND_TONE: Record<VixBand, string> = {
   NORMAL: "bg-accent-green/15 text-accent-green border-accent-green/30",
@@ -100,10 +100,7 @@ function CompactBriefing({ briefing, onRefresh, fetching }: {
         <Activity className="size-4 text-accent-violet" />
         <span className="font-semibold">Agentic briefing</span>
         <span className="text-[11px] text-fg-subtle num">
-          {new Date(briefing.run_at).toLocaleTimeString("en-IN", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {formatTimeIST(briefing.run_at)} IST
         </span>
       </div>
       <span className={`px-2 py-0.5 rounded-full text-[11px] ${REGIME_TONE[briefing.regime] ?? REGIME_TONE.UNKNOWN}`}>
@@ -161,7 +158,7 @@ function FullBriefing({
               <Sparkles className="size-5 text-accent-violet" />
               <h2 className="font-semibold text-lg">Agentic briefing</h2>
               <span className="text-[11px] text-fg-subtle num">
-                Generated {new Date(briefing.run_at).toLocaleString("en-IN")}
+                Generated {formatDateTimeIST(briefing.run_at)} IST
               </span>
             </div>
             <p className="text-[12px] text-fg-muted mt-1">

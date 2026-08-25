@@ -32,24 +32,25 @@
     "regime_STRONG_DOWNTREND",
     "regime_VOLATILE"
   ],
-  "mean_auc": 0.5787737043342187,
+  "mean_auc": 0.5800924960397035,
   "fold_aucs": [
-    0.5642257630558182,
-    0.5914815215538579,
-    0.58061382839298
+    0.5675613810981606,
+    0.5836166331687901,
+    0.5890994738521598
   ],
-  "train_rows": 49148,
-  "positive_rate": 0.19068934646374217,
+  "train_rows": 51249,
+  "positive_rate": 0.18747682881617203,
   "top_features": [
     "atr_pct",
     "ema50_vs_ema200",
-    "adx",
-    "return_60d",
     "pct_from_52w_high",
+    "return_60d",
+    "ema20_vs_ema50",
     "bb_width",
-    "return_20d",
+    "adx",
     "macd_signal",
-    "macd_hist",
-    "vol_ratio"
-  ]
+    "return_20d",
+    "macd"
+  ],
+  "model_kind": "random_forest"
 }

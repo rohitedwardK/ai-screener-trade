@@ -14,7 +14,7 @@ serialises the persisted state.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
@@ -70,10 +70,19 @@ class BriefingOut(BaseModel):
     disclaimer: str
 
 
+def _utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Tag a stored naive-UTC timestamp as UTC so it serialises with a `+00:00`
+    offset. Without this the client parses the bare ISO string as *local* time
+    and every displayed time / relative age is off by the local UTC offset."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
 def _serialize_run(row: AgentRun) -> AgentRunOut:
     return AgentRunOut(
         id=int(row.id),
-        run_at=row.run_at,
+        run_at=_utc_aware(row.run_at),
         cycle_type=row.cycle_type,
         status=row.status,
         head_agent_status=row.head_agent_status,
@@ -87,7 +96,7 @@ def _serialize_run(row: AgentRun) -> AgentRunOut:
 def _serialize_briefing(row: DailyBriefing) -> BriefingOut:
     return BriefingOut(
         id=int(row.id),
-        run_at=row.run_at,
+        run_at=_utc_aware(row.run_at),
         agent_run_id=row.agent_run_id,
         regime=row.regime,
         market_trend=row.market_trend,
@@ -122,7 +131,7 @@ def get_agent_status(
         deep_cycle_running=agent_jobs.is_deep_cycle_running(),
         deep_cycle_pending=agent_jobs.has_pending_deep_request(),
         last_runs=[_serialize_run(r) for r in rows],
-        last_deep_cycle_at=last_deep,
+        last_deep_cycle_at=_utc_aware(last_deep),
     )
 
 

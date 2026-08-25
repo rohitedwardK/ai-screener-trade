@@ -23,6 +23,32 @@ export const fmt = {
 
 export const symbolDisplay = (s: string) => s.replace(/\.NS$/, "");
 
+const IST_TZ = "Asia/Kolkata";
+
+/** Full date + time rendered in IST, regardless of the viewer's machine tz. */
+export function formatDateTimeIST(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "—";
+  return new Date(ts).toLocaleString("en-IN", { timeZone: IST_TZ });
+}
+
+/** Clock time rendered in IST. Pass withSeconds for HH:MM:SS. */
+export function formatTimeIST(
+  iso: string | null | undefined,
+  withSeconds = false,
+): string {
+  if (!iso) return "—";
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return "—";
+  return new Date(ts).toLocaleTimeString("en-IN", {
+    timeZone: IST_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(withSeconds ? { second: "2-digit" } : {}),
+  });
+}
+
 export function classNames(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
 }
