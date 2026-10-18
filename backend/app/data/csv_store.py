@@ -128,3 +128,22 @@ def incremental_start(symbol: str, overlap_days: int = 5) -> Optional[date]:
 
 def list_cached_symbols() -> list[str]:
     return sorted(p.stem for p in _csv_dir().glob("*.csv"))
+
+
+def history_coverage(symbols: list[str]) -> list[dict]:
+    """Report observed coverage without treating exchange holidays as missing bars."""
+    today = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize()
+    cutoff = today - pd.DateOffset(years=5) + pd.Timedelta(days=10)
+    result = []
+    for symbol in symbols:
+        frame = load(symbol)
+        result.append({
+            "symbol": symbol, "rows": len(frame),
+            "start": frame.index.min().date().isoformat() if len(frame) else None,
+            "end": frame.index.max().date().isoformat() if len(frame) else None,
+            "five_year_span": bool(len(frame) and frame.index.min() <= cutoff),
+            "missing_values": int(frame.isna().sum().sum()),
+            "duplicate_dates": int(frame.index.duplicated().sum()),
+            "stale": bool(not len(frame) or (today - frame.index.max()).days > 7),
+        })
+    return result

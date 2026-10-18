@@ -5,7 +5,8 @@ import { fmt, regimeTone, symbolDisplay } from "@/lib/format";
 const DIRECTION_TONE = {
   LONG: "green",
   SHORT: "red",
-  NEUTRAL: "amber",
+  WAIT: "muted",
+  NEUTRAL: "muted",
 } as const;
 
 function confidenceTone(c: number): "green" | "amber" | "red" {
@@ -64,7 +65,7 @@ export function MethodSignalCard({
 
       {/* Badges row */}
       <div className="flex flex-wrap gap-1.5">
-        <Badge tone={DIRECTION_TONE[card.direction]}>{card.direction}</Badge>
+        <Badge tone={DIRECTION_TONE[card.direction] ?? "muted"}>{card.direction}</Badge>
         <Badge tone={regimeTone(card.regime)}>
           {card.regime.replace(/_/g, " ")}
         </Badge>

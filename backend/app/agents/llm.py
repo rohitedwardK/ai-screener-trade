@@ -1,10 +1,10 @@
-"""Minimal Ollama client used by the head agent's markdown synthesis.
+"""Minimal Ollama client for briefing synthesis and bounded research actions.
 
 We deliberately don't use a heavyweight agent framework (CrewAI / LangGraph)
-because the LLM's only job in this stack is to write a 6-8 line markdown
-briefing grounded in a deterministic JSON payload. A direct call to the
-Ollama OpenAI-compatible endpoint via the existing `httpx` client is
-sufficient and keeps the dependency surface minimal.
+because briefings and research tool selection use small, grounded payloads.
+Research validates model actions separately and never accepts model-generated
+price levels. A direct call to Ollama via the existing `httpx` client keeps
+the dependency surface minimal.
 
 If Ollama is unreachable the orchestrator falls back to the deterministic
 markdown stitcher in `orchestrator._fallback_summary_md`.
@@ -43,7 +43,7 @@ def _ollama_base(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
-def chat(prompt: str, *, system: Optional[str] = None, temperature: float = 0.2) -> str:
+def chat(prompt: str, *, system: Optional[str] = None, temperature: float = 0.2, timeout_sec: Optional[float] = None) -> str:
     """Send a single-turn prompt to Ollama and return the assistant text.
 
     Raises `AgenticUnavailable` on connection / timeout errors so the
@@ -52,7 +52,7 @@ def chat(prompt: str, *, system: Optional[str] = None, temperature: float = 0.2)
     settings = get_settings()
     base = _ollama_base(settings.AGENTIC_LLM_BASE_URL)
     model = _strip_openai_prefix(settings.AGENTIC_LLM_MODEL)
-    timeout = float(settings.AGENTIC_LLM_TIMEOUT_SEC)
+    timeout = float(settings.AGENTIC_LLM_TIMEOUT_SEC) if timeout_sec is None else timeout_sec
 
     messages = []
     if system:
@@ -93,14 +93,16 @@ def chat(prompt: str, *, system: Optional[str] = None, temperature: float = 0.2)
 
 
 def is_available() -> bool:
-    """Cheap reachability probe (HEAD on the root URL). Used by tests + the
-    /v1/agents/status endpoint to indicate whether the LLM path is online."""
+    """Check that Ollama responds and the configured local model is installed."""
     settings = get_settings()
     base = _ollama_base(settings.AGENTIC_LLM_BASE_URL)
     try:
         with httpx.Client(timeout=3.0) as client:
             resp = client.get(f"{base}/api/tags")
-        return resp.status_code < 400
+        if resp.status_code >= 400:
+            return False
+        model = _strip_openai_prefix(settings.AGENTIC_LLM_MODEL)
+        return any(row.get("name") == model for row in resp.json().get("models", []))
     except Exception:  # noqa: BLE001
         return False
 

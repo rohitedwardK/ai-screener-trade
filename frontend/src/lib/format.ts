@@ -25,10 +25,15 @@ export const symbolDisplay = (s: string) => s.replace(/\.NS$/, "");
 
 const IST_TZ = "Asia/Kolkata";
 
+function parseServerTimestamp(iso: string): number {
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
+  return Date.parse(normalized);
+}
+
 /** Full date + time rendered in IST, regardless of the viewer's machine tz. */
 export function formatDateTimeIST(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const ts = Date.parse(iso);
+  const ts = parseServerTimestamp(iso);
   if (Number.isNaN(ts)) return "—";
   return new Date(ts).toLocaleString("en-IN", { timeZone: IST_TZ });
 }
@@ -39,7 +44,7 @@ export function formatTimeIST(
   withSeconds = false,
 ): string {
   if (!iso) return "—";
-  const ts = Date.parse(iso);
+  const ts = parseServerTimestamp(iso);
   if (Number.isNaN(ts)) return "—";
   return new Date(ts).toLocaleTimeString("en-IN", {
     timeZone: IST_TZ,
@@ -79,7 +84,7 @@ export function scoreTone(score: number): "green" | "amber" | "red" | "muted" {
 
 export function formatRelative(iso: string | null | undefined): string {
   if (!iso) return "never";
-  const ts = Date.parse(iso);
+  const ts = parseServerTimestamp(iso);
   if (Number.isNaN(ts)) return "never";
   const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (seconds < 60) return `${seconds}s ago`;

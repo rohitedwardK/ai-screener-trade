@@ -1,10 +1,11 @@
 import { Activity, AlertCircle, CheckCircle2, CircleDashed, Loader2 } from "lucide-react";
-import type { AgentRunStatus } from "@/api/types";
+import type { AgentJsonStatus, AgentRunStatus } from "@/api/types";
 
 interface Props {
   label: string;
   description: string;
   status: AgentRunStatus | null;
+  jsonStatus?: AgentJsonStatus | null;
   lastRunAt?: string | null;
 }
 
@@ -58,7 +59,7 @@ function formatRelative(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export function AgentStatusCard({ label, description, status, lastRunAt }: Props) {
+export function AgentStatusCard({ label, description, status, jsonStatus, lastRunAt }: Props) {
   const p = status ? STATUS_PRESENTATION[status] : IDLE_PRESENTATION;
   return (
     <div className="card p-4 flex flex-col gap-2">
@@ -75,6 +76,10 @@ export function AgentStatusCard({ label, description, status, lastRunAt }: Props
         </span>
       </div>
       <p className="text-[12px] text-fg-muted leading-relaxed">{description}</p>
+      {jsonStatus && <div className="flex items-center gap-1.5 text-[11px] text-fg-muted">
+        <span className={`size-2 rounded-full ${jsonStatus === "VALID" ? "bg-accent-green" : jsonStatus === "INVALID" ? "bg-accent-amber" : "bg-fg-subtle"}`} />
+        <span>LLM JSON: {jsonStatus === "VALID" ? "Valid" : jsonStatus === "INVALID" ? "Invalid; retry queued" : jsonStatus === "UNAVAILABLE" ? "Unavailable" : "Not used"}</span>
+      </div>}
       <div className="text-[11px] text-fg-subtle">Last seen: {formatRelative(lastRunAt)}</div>
     </div>
   );

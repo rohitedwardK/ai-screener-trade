@@ -23,6 +23,14 @@ from . import patterns
 from .indicators import compute_all, latest_indicator_dict
 from .regime import classify
 from .risk import TradePlan, long_plan, short_plan
+from . import signal_evidence as ev
+from .signal_decision import (
+    DIRECTION_LONG,
+    DIRECTION_SHORT,
+    DIRECTION_WAIT,
+    apply_regime_safety,
+    category_proposed_direction,
+)
 
 
 CATEGORIES = [
@@ -47,6 +55,7 @@ class SignalRecord:
     confidence: float
     reasons: List[str] = field(default_factory=list)
     plan: Optional[TradePlan] = None
+    direction: str = DIRECTION_WAIT
     indicators: Dict = field(default_factory=dict)
     regime: str = "RANGE"
 
@@ -64,9 +73,95 @@ def _score_from_reasons(reasons: List[str], cap: int = 5) -> float:
     return min(100.0, (len(reasons) / cap) * 100.0)
 
 
-def _confidence(reasons: List[str], required: int = 3) -> float:
-    """Confidence = min(1, supporting_rules / required)."""
+def _agreement(reasons: List[str], required: int = 3) -> float:
+    """Rule agreement: how many gate bullets fired, not directional conviction."""
     return round(min(1.0, len(reasons) / required), 2)
+
+
+def _confidence(reasons: List[str], required: int = 3) -> float:
+    """Legacy categories: agreement stored as confidence until migrated."""
+    return _agreement(reasons, required=required)
+
+
+def _emit(
+    out: List[SignalRecord],
+    *,
+    symbol: str,
+    as_of: date,
+    category: str,
+    reasons: List[str],
+    score_cap: int,
+    plan: Optional[TradePlan],
+    indicators: Dict,
+    regime: str,
+    confidence_required: int = 3,
+) -> None:
+    """Attach direction after the rule fires; strip the plan when the engine says WAIT."""
+    proposed = category_proposed_direction(category)
+    direction, veto = apply_regime_safety(proposed, regime)
+    final_reasons = list(reasons)
+    if direction == DIRECTION_WAIT:
+        plan = None
+        if veto:
+            final_reasons.append(veto)
+    out.append(SignalRecord(
+        symbol=symbol, as_of_date=as_of, category=category,
+        score=_score_from_reasons(final_reasons, cap=score_cap),
+        confidence=_agreement(final_reasons, required=confidence_required),
+        reasons=final_reasons, plan=plan, direction=direction,
+        indicators=indicators, regime=regime,
+    ))
+
+
+def _emit_signed(
+    out: List[SignalRecord],
+    *,
+    symbol: str,
+    as_of: date,
+    category: str,
+    regime: str,
+    unsigned_reasons: List[str],
+    bull: int,
+    bear: int,
+    signed_reasons: List[str],
+    score_cap: int,
+    close: float,
+    atr_v: float,
+    indicators: Dict,
+    plan_stop_mult: float = 1.0,
+    plan_rr1: float = 1.0,
+    plan_rr2: float = 2.0,
+) -> None:
+    """Emit after signed votes pick direction; agreement vs conviction are separate."""
+    proposed, conflict = ev.direction_from_signed_votes(bull, bear)
+    display = list(unsigned_reasons) + list(signed_reasons)
+    plan: Optional[TradePlan] = None
+    direction = proposed
+    veto: Optional[str] = None
+
+    if conflict:
+        direction = DIRECTION_WAIT
+        display.append(conflict)
+        conviction = 0.0
+    else:
+        direction, veto = apply_regime_safety(proposed, regime)
+        if direction == DIRECTION_LONG:
+            plan = long_plan(close, atr_v, stop_mult=plan_stop_mult, rr1=plan_rr1, rr2=plan_rr2)
+        elif direction == DIRECTION_SHORT:
+            plan = short_plan(close, atr_v, stop_mult=plan_stop_mult, rr1=plan_rr1, rr2=plan_rr2)
+        else:
+            plan = None
+        if veto:
+            display.append(veto)
+        conviction = ev.direction_confidence(bull, bear) if direction in (DIRECTION_LONG, DIRECTION_SHORT) else 0.0
+
+    out.append(SignalRecord(
+        symbol=symbol, as_of_date=as_of, category=category,
+        score=_score_from_reasons(unsigned_reasons + signed_reasons, cap=score_cap),
+        confidence=conviction,
+        reasons=display, plan=plan, direction=direction,
+        indicators=indicators, regime=regime,
+    ))
 
 
 def evaluate_symbol(
@@ -116,14 +211,11 @@ def evaluate_symbol(
     if pct_from_high is not None and pct_from_high > -5:
         reasons.append("Within 5% of 52-week high")
     if len(reasons) >= 3 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=2.0)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="MOMENTUM_LEADER",
-            score=_score_from_reasons(reasons, cap=5),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="MOMENTUM_LEADER",
+            reasons=reasons, score_cap=5, plan=long_plan(close, atr_v, stop_mult=2.0),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- FRESH_BREAKOUT -----
     reasons = []
@@ -140,14 +232,11 @@ def evaluate_symbol(
     if macd_h is not None and macd_h > 0:
         reasons.append("MACD histogram positive")
     if (pat["breakout_20d"] or pat["breakout_55d"]) and len(reasons) >= 2 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=1.5)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="FRESH_BREAKOUT",
-            score=_score_from_reasons(reasons, cap=5),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="FRESH_BREAKOUT",
+            reasons=reasons, score_cap=5, plan=long_plan(close, atr_v, stop_mult=1.5),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- PULLBACK_ENTRY -----
     reasons = []
@@ -160,14 +249,11 @@ def evaluate_symbol(
     if regime in ("UPTREND", "STRONG_UPTREND"):
         reasons.append("Uptrend intact")
     if pat["pullback"] and len(reasons) >= 2 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=1.5)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="PULLBACK_ENTRY",
-            score=_score_from_reasons(reasons, cap=4),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="PULLBACK_ENTRY",
+            reasons=reasons, score_cap=4, plan=long_plan(close, atr_v, stop_mult=1.5),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- OVERSOLD_RECOVERING -----
     reasons = []
@@ -180,14 +266,11 @@ def evaluate_symbol(
     if vol_ratio is not None and vol_ratio >= 1.2:
         reasons.append(f"Volume confirmation {vol_ratio:.1f}x")
     if pat["oversold_bounce"] and len(reasons) >= 2 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=1.5)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="OVERSOLD_RECOVERING",
-            score=_score_from_reasons(reasons, cap=4),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="OVERSOLD_RECOVERING",
+            reasons=reasons, score_cap=4, plan=long_plan(close, atr_v, stop_mult=1.5),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- OVERBOUGHT_AVOID -----
     reasons = []
@@ -200,13 +283,11 @@ def evaluate_symbol(
     if ret60 is not None and ret60 > 40:
         reasons.append(f"60-day return very high ({ret60:.0f}%)")
     if len(reasons) >= 2:
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="OVERBOUGHT_AVOID",
-            score=_score_from_reasons(reasons, cap=3),
-            confidence=_confidence(reasons, required=2),
-            reasons=reasons, plan=None,
-            indicators=indicators_dict, regime=regime,
-        ))
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="OVERBOUGHT_AVOID",
+            reasons=reasons, score_cap=3, plan=None,
+            indicators=indicators_dict, regime=regime, confidence_required=2,
+        )
 
     # ----- WEAK_AVOID -----
     reasons = []
@@ -219,14 +300,11 @@ def evaluate_symbol(
     if pat["bearish_reversal"] or pat["bearish_engulfing"]:
         reasons.append("Bearish reversal pattern")
     if len(reasons) >= 2 and atr_v is not None:
-        plan = short_plan(close, atr_v)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="WEAK_AVOID",
-            score=_score_from_reasons(reasons, cap=4),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="WEAK_AVOID",
+            reasons=reasons, score_cap=4, plan=short_plan(close, atr_v),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- HIGH_RISK -----
     reasons = []
@@ -239,13 +317,11 @@ def evaluate_symbol(
     if last.get("bb_width") is not None and float(last["bb_width"]) > 0.20:
         reasons.append("Bollinger band width wide")
     if reasons:
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="HIGH_RISK",
-            score=_score_from_reasons(reasons, cap=3),
-            confidence=_confidence(reasons, required=2),
-            reasons=reasons, plan=None,
-            indicators=indicators_dict, regime=regime,
-        ))
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="HIGH_RISK",
+            reasons=reasons, score_cap=3, plan=None,
+            indicators=indicators_dict, regime=regime, confidence_required=2,
+        )
 
     # ----- SWING_NEXT_WEEK -----
     reasons = []
@@ -260,34 +336,50 @@ def evaluate_symbol(
     if pat["pullback"] or pat["breakout_20d"] or pat["bullish_engulfing"]:
         reasons.append("Setup present (pullback / breakout / engulfing)")
     if len(reasons) >= 3 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=1.5)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="SWING_NEXT_WEEK",
-            score=_score_from_reasons(reasons, cap=5),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
+        _emit(
+            out, symbol=symbol, as_of=as_of, category="SWING_NEXT_WEEK",
+            reasons=reasons, score_cap=5, plan=long_plan(close, atr_v, stop_mult=1.5),
             indicators=indicators_dict, regime=regime,
-        ))
+        )
 
     # ----- INTRADAY_WATCH_TOMORROW -----
-    reasons = []
-    if vol_ratio is not None and vol_ratio >= 1.5:
-        reasons.append(f"High volume {vol_ratio:.1f}x")
-    if atr_pct is not None and atr_pct >= 1.5:
-        reasons.append(f"Sufficient range (ATR% {atr_pct:.1f})")
-    if pat["breakout_20d"] or pat["bullish_engulfing"] or pat["bearish_engulfing"]:
-        reasons.append("Pattern primed")
-    if regime in ("STRONG_UPTREND", "UPTREND", "STRONG_DOWNTREND", "DOWNTREND"):
-        reasons.append(f"Directional regime {regime}")
-    if len(reasons) >= 3 and atr_v is not None:
-        plan = long_plan(close, atr_v, stop_mult=1.0, rr1=1.0, rr2=2.0)
-        out.append(SignalRecord(
-            symbol=symbol, as_of_date=as_of, category="INTRADAY_WATCH_TOMORROW",
-            score=_score_from_reasons(reasons, cap=4),
-            confidence=_confidence(reasons),
-            reasons=reasons, plan=plan,
-            indicators=indicators_dict, regime=regime,
-        ))
+    # Eligibility: actionable range + a directional pattern. Side comes only from
+    # signed votes (patterns + regime), never a category default LONG.
+    if (
+        atr_v is not None
+        and atr_pct is not None
+        and atr_pct >= 1.5
+        and ev.has_directional_pattern(pat)
+    ):
+        unsigned: List[str] = [f"Sufficient range (ATR% {atr_pct:.1f})"]
+        if vol_ratio is not None and vol_ratio >= 1.5:
+            unsigned.append(f"High volume {vol_ratio:.1f}x")
+
+        pat_bull, pat_bear, pat_reasons = ev.pattern_signed_votes(pat)
+        reg_bull, reg_bear, reg_reason = ev.regime_signed_vote(regime)
+        signed_reasons = list(pat_reasons)
+        if reg_reason:
+            signed_reasons.append(reg_reason)
+        bull, bear = ev.combine_signed_votes((pat_bull, pat_bear), (reg_bull, reg_bear))
+
+        _emit_signed(
+            out,
+            symbol=symbol,
+            as_of=as_of,
+            category="INTRADAY_WATCH_TOMORROW",
+            regime=regime,
+            unsigned_reasons=unsigned,
+            bull=bull,
+            bear=bear,
+            signed_reasons=signed_reasons,
+            score_cap=4,
+            close=close,
+            atr_v=atr_v,
+            indicators=indicators_dict,
+            plan_stop_mult=1.0,
+            plan_rr1=1.0,
+            plan_rr2=2.0,
+        )
 
     return out
 
@@ -307,4 +399,5 @@ def signal_to_dict(rec: SignalRecord) -> dict:
         "target_2": plan.target_2 if plan else None,
         "invalidation": plan.invalidation if plan else None,
         "reasons_json": rec.reasons,
+        "direction": rec.direction,
     }

@@ -235,6 +235,7 @@ def infer(
 
     from ..analysis.indicators import compute_all
     from ..analysis.regime import classify
+    from ..analysis.signal_decision import decide_from_rally_probability
 
     cards: List[dict] = []
     for sym in symbols:
@@ -261,10 +262,11 @@ def infer(
             logits = model(X_t)
             probs = torch.softmax(logits, dim=1).numpy()[0]
 
-        prob = float(probs[1])   # P(up)
+        prob = float(probs[1])   # P(+3% in 5d)
         close_val = float(df.iloc[-1]["close"])
         regime, _ = classify(df)
-        direction = "LONG" if prob >= 0.5 else ("SHORT" if prob < 0.35 else "NEUTRAL")
+        direction, veto = decide_from_rally_probability(prob, regime)
+        top_factors = [veto] if veto else []
 
         cards.append({
             "symbol": sym,
@@ -274,7 +276,7 @@ def infer(
             "category": None,
             "regime": regime,
             "close": close_val,
-            "top_factors": [],   # LSTM doesn't produce interpretable factor labels
+            "top_factors": top_factors,
         })
 
     cards.sort(key=lambda c: -c["confidence"])

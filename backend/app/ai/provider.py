@@ -1,7 +1,7 @@
 """Pluggable LLM provider interface."""
 from __future__ import annotations
 
-from typing import Dict, Protocol
+from typing import Any, Dict, Protocol
 
 from ..config import get_settings
 
@@ -9,7 +9,7 @@ from ..config import get_settings
 class BaseLLMProvider(Protocol):
     name: str
 
-    def explain(self, payload: Dict) -> str: ...
+    def explain(self, payload: Dict) -> Dict[str, Any]: ...
 
 
 def get_provider() -> BaseLLMProvider:

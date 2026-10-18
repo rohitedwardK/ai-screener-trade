@@ -119,10 +119,39 @@ class IndexSignalOut(BaseModel):
     recommendations: List[ContractRecommendationOut] = Field(default_factory=list)
 
 
+class IndexForecastOut(BaseModel):
+    weekly_bias: str = "Neutral"
+    hourly_bias: str = "Neutral"
+    fifteen_minute_bias: str = "Neutral"
+    next_5m_bias: str = "WAIT"
+    setup: str = "NO_TRADE"
+    breakout_state: str = "INSIDE_RANGE"
+    breakout_level: Optional[float] = None
+    breakdown_level: Optional[float] = None
+    entry: Optional[float] = None
+    stop_loss: Optional[float] = None
+    target_1: Optional[float] = None
+    target_2: Optional[float] = None
+    invalidation: Optional[float] = None
+    confidence: float = 0.0
+    reasons: List[str] = Field(default_factory=list)
+    cautions: List[str] = Field(default_factory=list)
+    as_of: Optional[str] = None
+
+
+class IndexForecastChartOut(BaseModel):
+    timeframe: str
+    bars: List[Dict[str, Any]] = Field(default_factory=list)
+    support: Optional[float] = None
+    resistance: Optional[float] = None
+
+
 class IndexDetailOut(BaseModel):
     instrument: IndexInstrumentOut
     snapshot: Optional[IndexSnapshotOut] = None
     signals: List[IndexSignalOut] = Field(default_factory=list)
+    forecast: Optional[IndexForecastOut] = None
+    forecast_chart: Dict[str, IndexForecastChartOut] = Field(default_factory=dict)
 
 
 class IndexRow(BaseModel):

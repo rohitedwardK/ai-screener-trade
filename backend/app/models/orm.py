@@ -89,6 +89,11 @@ class Signal(Base):
     target_2 = Column(Float, nullable=True)
     invalidation = Column(Float, nullable=True)
     reasons_json = Column(JSON, nullable=False, default=list)
+    # Commodity weekly-on-monthly plans; Nifty screener rows leave these null.
+    direction = Column(String, nullable=True)
+    expiry = Column(Date, nullable=True)
+    days_to_expiry = Column(Integer, nullable=True)
+    horizon = Column(String, nullable=True)
 
     stock = relationship("Stock", back_populates="signals")
     live_verification = relationship(
@@ -102,6 +107,17 @@ class Signal(Base):
         Index("ix_signals_runat_category", "run_at", "category"),
         Index("ix_signals_symbol_runat", "symbol", "run_at"),
     )
+
+
+class QualityObservation(Base):
+    """Immutable research samples, independent of disposable screener rows."""
+    __tablename__ = "quality_observations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sample_key = Column(String, nullable=False, unique=True)
+    symbol = Column(String, nullable=False, index=True)
+    observed_at = Column(DateTime, nullable=False)
+    payload = Column(JSON, nullable=False)
 
 
 class LiveSignalVerification(Base):

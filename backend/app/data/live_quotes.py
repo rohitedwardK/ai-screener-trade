@@ -5,14 +5,11 @@ intraday scheduler so they hit the same in-memory cache (TTL = 30 s) and
 respect the same rate-limits.
 
 Source priority:
-    1. Upstox v2 `market-quote/quotes` for any symbol present in the
-       hardcoded Nifty 50 + indices instrument-key map. This is a true
-       real-time intraday feed.
-    2. yfinance 1-minute bars for everything else (and as a global
-       fallback if Upstox isn't configured or the request fails).
-       NSE caveat: yfinance 1-minute bars are roughly 15 minutes
-       delayed for Indian equities - acceptable for paper-trading
-       simulation but should never be presented as a real-time feed.
+    1. Upstox for every mapped stock, index, and MCX commodity, including
+       after the exchange closes (when Upstox returns the last traded quote).
+    2. yfinance only for unmapped instruments or quotes Upstox did not return.
+    3. If Upstox misses a commodity, use the last whole-rupee MCX close from
+       the CSV cache. COMEX × USDINR is used only on cold start.
 """
 from __future__ import annotations
 
@@ -23,6 +20,7 @@ from typing import Dict, FrozenSet, List, Tuple
 
 import yfinance as yf
 
+from ..core.commodity_universe import is_commodity_symbol
 from . import upstox_client, yf_client
 
 log = logging.getLogger(__name__)
@@ -34,6 +32,7 @@ LIVE_CACHE_TTL_SECONDS = 30.0
 SOURCE_NONE = "none"
 SOURCE_UPSTOX = "upstox"
 SOURCE_YFINANCE = "yfinance"
+SOURCE_SNAPSHOT = "snapshot"
 SOURCE_MIXED = "mixed"
 
 _lock = threading.Lock()
@@ -67,41 +66,106 @@ def _fetch_from_upstox(symbols: List[str]) -> Dict[str, float]:
         return {}
 
 
-def _fetch_from_yfinance(symbols: List[str]) -> Dict[str, float]:
-    """One batched `yf.download(... interval='1m')` for the supplied symbols.
-    Returns a partial dict on per-symbol parse failures, empty dict on any
-    request-level error."""
+def _last_closes_from_yf_df(df: object, symbols: List[str]) -> Dict[str, float]:
+    """Parse a yfinance download frame (single- or multi-ticker) into last closes."""
+    result: Dict[str, float] = {}
+    if df is None or getattr(df, "empty", True):
+        return result
+    for sym in symbols:
+        try:
+            last = df[sym]["Close"].dropna().iloc[-1]
+            result[sym] = float(last)
+        except (KeyError, IndexError, TypeError):
+            try:
+                # Single-symbol downloads return a flat DataFrame, not MultiIndex.
+                last = df["Close"].dropna().iloc[-1]
+                result[sym] = float(last)
+            except (KeyError, IndexError, TypeError):
+                pass
+    return result
+
+
+def _yf_download_closes(
+    symbols: List[str], *, period: str, interval: str
+) -> Dict[str, float]:
     if not symbols:
         return {}
     yf_client.pace()
-    result: Dict[str, float] = {}
     try:
         df = yf.download(
             " ".join(symbols),
-            period="1d",
-            interval="1m",
+            period=period,
+            interval=interval,
             auto_adjust=True,
             progress=False,
             group_by="ticker",
         )
     except Exception:
-        log.warning("yfinance live price fetch failed", exc_info=True)
-        return result
-    if df is None or df.empty:
-        return result
+        log.warning(
+            "yfinance live price fetch failed (interval=%s)", interval, exc_info=True
+        )
+        return {}
+    return _last_closes_from_yf_df(df, symbols)
 
-    for sym in symbols:
-        try:
-            last = df[sym]["Close"].dropna().iloc[-1]
-            result[sym] = float(last)
-        except (KeyError, IndexError):
-            try:
-                # Single-symbol downloads return a flat DataFrame, not MultiIndex.
-                last = df["Close"].dropna().iloc[-1]
-                result[sym] = float(last)
-            except (KeyError, IndexError):
-                pass
+
+def _fetch_mcx_fallback(symbols: List[str]) -> Dict[str, float]:
+    """MCX symbols when Upstox is unavailable.
+
+    Prefer the last real MCX close from CSV (Upstox-backed history). Only
+    fall back to COMEX×INR when there is no cached MCX row yet.
+    """
+    if not symbols:
+        return {}
+    from . import mcx as mcx_data
+
+    out = mcx_data.cached_close_ltp(symbols)
+    missing = [s for s in symbols if s not in out]
+    if missing:
+        out.update(mcx_data.comex_proxy_ltp(missing))
+    return out
+
+
+def _fetch_from_yfinance(symbols: List[str]) -> Dict[str, float]:
+    """Batched yfinance last-close. MCX app symbols have no Yahoo ticker;
+    they use cached MCX closes or, on cold start, COMEX×INR proxy.
+    """
+    if not symbols:
+        return {}
+    direct = [s for s in symbols if not is_commodity_symbol(s)]
+    mcx_syms = [s for s in symbols if is_commodity_symbol(s)]
+    result: Dict[str, float] = {}
+    if direct:
+        result.update(_yf_download_closes(direct, period="1d", interval="1m"))
+        missing = [s for s in direct if s not in result]
+        if missing:
+            result.update(_yf_download_closes(missing, period="5d", interval="1d"))
+    if mcx_syms:
+        result.update(_fetch_mcx_fallback(mcx_syms))
     return result
+
+
+def _classify_source(
+    *,
+    upstox_prices: Dict[str, float],
+    yf_prices: Dict[str, float],
+    mcx_syms: List[str],
+) -> str:
+    """Map the merged fetch result to a UI-facing source label."""
+    if not upstox_prices and not yf_prices:
+        return SOURCE_NONE
+    if upstox_prices and not yf_prices:
+        return SOURCE_UPSTOX
+    if yf_prices and not upstox_prices:
+        if mcx_syms and all(s in yf_prices for s in mcx_syms):
+            from . import mcx as mcx_data
+
+            snap = mcx_data.cached_close_ltp(mcx_syms)
+            if snap and all(s in snap for s in mcx_syms):
+                return SOURCE_SNAPSHOT
+            if snap and any(s in snap for s in mcx_syms):
+                return SOURCE_MIXED
+        return SOURCE_YFINANCE
+    return SOURCE_MIXED
 
 
 def fetch_live_prices(symbols: List[str]) -> Dict[str, float]:
@@ -110,8 +174,10 @@ def fetch_live_prices(symbols: List[str]) -> Dict[str, float]:
     Behaviour:
         - Returns the cached dict if `symbols` matches the previous call's
           set and fewer than 30 s have elapsed.
-        - Otherwise tries Upstox for symbols in its instrument-key map,
-          then yfinance for everything Upstox didn't cover or return.
+        - Tries Upstox first for every mapped stock, index, and commodity,
+          regardless of session state.
+        - Uses yfinance only for unmapped symbols or quotes Upstox did not
+          return, so an expired token does not remove all price coverage.
         - On total failure returns an empty dict; callers must fall back.
     """
     global _prices, _symbols, _fetched_at, _last_source
@@ -134,21 +200,19 @@ def fetch_live_prices(symbols: List[str]) -> Dict[str, float]:
     upstox_misses = [s for s in upstox_syms if s not in upstox_prices]
     yf_targets = yf_syms + upstox_misses
 
-    yf_prices = _fetch_from_yfinance(yf_targets)
+    yf_prices = _fetch_from_yfinance(yf_targets) if yf_targets else {}
+    mcx_syms = [s for s in symbols if is_commodity_symbol(s)]
 
     merged: Dict[str, float] = {}
     merged.update(upstox_prices)
     for s, p in yf_prices.items():
         merged.setdefault(s, p)
 
-    if not merged:
-        source = SOURCE_NONE
-    elif upstox_prices and yf_prices:
-        source = SOURCE_MIXED
-    elif upstox_prices:
-        source = SOURCE_UPSTOX
-    else:
-        source = SOURCE_YFINANCE
+    source = _classify_source(
+        upstox_prices=upstox_prices,
+        yf_prices=yf_prices,
+        mcx_syms=mcx_syms,
+    )
 
     with _lock:
         _prices = merged
@@ -168,7 +232,7 @@ def cached_prices() -> Dict[str, float]:
 def last_source() -> str:
     """Source label for the most recent successful `fetch_live_prices` call.
 
-    One of: "upstox" | "yfinance" | "mixed" | "none". Useful for surfacing
+    One of: "upstox" | "yfinance" | "snapshot" | "mixed" | "none".
     the active data feed in diagnostic UIs without re-issuing a request.
     """
     with _lock:

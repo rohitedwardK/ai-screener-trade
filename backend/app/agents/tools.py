@@ -35,19 +35,16 @@ from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import desc, select
 
-from ..analysis import ml_gbm, ml_lstm, ml_rf
-from ..api.method_analysis import (
-    _baseline_prev_close_avg_vol,
-    _fetch_quotes_nifty50,
-    _run_rule_based,
-)
+from ..analysis import ml_rf
+from ..analysis.market_trend import classify_market_trend
+from ..core import method_analysis as method_service
 from ..core import live_verification as live_verif_core
+from ..core.commodity_universe import is_commodity_symbol
 from ..core.index_pipeline import refresh_intraday as run_index_intraday_refresh
 from ..core.pipeline import run_full_refresh
 from ..core.universe import all_symbols, stock_meta
-from ..data import csv_store, event_calendar, news_rss, vix as vix_data
+from ..data import csv_store, event_calendar, index_csv_store, news_rss, vix as vix_data
 from ..db import session_scope
-from ..live_analysis import movers as movers_mod
 from ..live_analysis import regime as regime_mod
 from ..live_analysis import config as live_cfg
 from ..models.live_analysis_orm import LiveMarketSnapshot
@@ -105,8 +102,7 @@ def cache_status_impl() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def _rule_based_cards(top_k: int) -> List[Dict[str, Any]]:
     name_map = {m["symbol"]: m["name"] for m in stock_meta()}
-    cards = _run_rule_based(name_map)
-    return cards[:top_k]
+    return method_service.run_rule_based(name_map, top_k=top_k)
 
 
 def _ml_cards(infer_callable: Callable, top_k: int) -> List[Dict[str, Any]]:
@@ -115,9 +111,9 @@ def _ml_cards(infer_callable: Callable, top_k: int) -> List[Dict[str, Any]]:
 
 
 def rank_methods_impl(top_k: int = 15) -> Dict[str, Any]:
-    """Run all four methods and return per-method top lists.
+    """Run Random Forest and the rule-based baseline and return per-method top lists.
 
-    A failed method (e.g. LSTM not trained yet) returns `{"error": "..."}`
+    A failed method (e.g. Random Forest unavailable) returns `{"error": "..."}`
     in its slot so the analysis agent can still finish without it.
     """
     out: Dict[str, Any] = {"methods": {}, "ran_at": datetime.now(timezone.utc).isoformat()}
@@ -125,8 +121,6 @@ def rank_methods_impl(top_k: int = 15) -> Dict[str, Any]:
     methods: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
         "rule_based": lambda: _rule_based_cards(top_k),
         "rf": lambda: _ml_cards(ml_rf.infer, top_k) if ml_rf.is_ready() else [],
-        "gbm": lambda: _ml_cards(ml_gbm.infer, top_k) if ml_gbm.is_ready() else [],
-        "lstm": lambda: _ml_cards(ml_lstm.infer, top_k) if ml_lstm.is_ready() else [],
     }
     for name, fn in methods.items():
         try:
@@ -168,22 +162,29 @@ def consensus_picks_impl(top_k: int = 10, min_votes: int = 2) -> List[Dict[str, 
 
     rows: List[Dict[str, Any]] = []
     for sym, info in votes.items():
-        if len(info["votes"]) < min_votes:
+        actionable = {
+            method: direction
+            for method, direction in info["directions"].items()
+            if direction in ("LONG", "SHORT")
+        }
+        if len(actionable) < min_votes:
             continue
-        confidences = list(info["confidences"].values())
+        if len(set(actionable.values())) != 1:
+            continue
+        confidences = [info["confidences"][method] for method in actionable]
         mean_conf = sum(confidences) / max(len(confidences), 1)
         # Score = mean confidence * vote weight (more methods agreeing -> higher score).
-        # Normalised so a unanimous 4-method 1.0 confidence pick scores 100.
-        score = round(mean_conf * (len(info["votes"]) / 4.0) * 100.0, 2)
+        # Normalised so a unanimous 2-method 1.0 confidence pick scores 100.
+        score = round(mean_conf * (len(actionable) / 2.0) * 100.0, 2)
         rows.append({
             "symbol": sym,
             "name": info["name"],
-            "votes": info["votes"],
-            "vote_count": len(info["votes"]),
+            "votes": list(actionable.keys()),
+            "vote_count": len(actionable),
             "mean_confidence": round(mean_conf, 3),
             "score": score,
-            "confidences": info["confidences"],
-            "directions": info["directions"],
+            "confidences": {method: info["confidences"][method] for method in actionable},
+            "directions": actionable,
             "regime": info["regime"],
             "close": info["close"],
             "categories": info["categories"],
@@ -206,7 +207,9 @@ def screener_signals_impl(
             from ..data import repository as repo
             sigs = repo.latest_signals(db, category=category, min_score=min_score)
             out: List[Dict[str, Any]] = []
-            for s in sigs[:limit]:
+            for s in sigs:
+                if is_commodity_symbol(s.symbol):
+                    continue
                 out.append({
                     "symbol": s.symbol,
                     "category": s.category,
@@ -216,8 +219,11 @@ def screener_signals_impl(
                     "stop_loss": s.stop_loss,
                     "target_1": s.target_1,
                     "invalidation": s.invalidation,
+                    "direction": s.direction,
                     "reasons": list(s.reasons_json or [])[:5],
                 })
+                if len(out) >= limit:
+                    break
             return out
     except Exception as exc:  # noqa: BLE001
         log.exception("screener_signals_impl failed")
@@ -268,6 +274,27 @@ def market_regime_impl() -> Dict[str, Any]:
         return {"regime": "UNKNOWN", "error": str(exc)}
 
 
+def market_trend_impl(symbol: str = "^NSEI") -> Dict[str, Any]:
+    """Daily breakout trend filtered by weekly price structure."""
+    try:
+        df = index_csv_store.load(symbol)
+        result = classify_market_trend(df, symbol=symbol)
+        return {
+            "trend": result.trend,
+            "label": result.label,
+            "daily_state": result.daily_state,
+            "weekly_state": result.weekly_state,
+            "basis": result.basis,
+            "symbol": result.symbol,
+            "close": result.close,
+            "previous_high": result.previous_high,
+            "previous_low": result.previous_low,
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.exception("market_trend_impl failed")
+        return {"trend": "UNKNOWN", "label": "Unclear", "error": str(exc), "symbol": symbol}
+
+
 def news_headlines_impl(limit: int = 10) -> List[Dict[str, Any]]:
     """RSS headlines from configured market feeds, deduped, recency-sorted."""
     try:
@@ -299,6 +326,8 @@ def sector_rotation_impl() -> List[Dict[str, Any]]:
                          "mean_score": 0.0, "top_symbols": []}
             )
             for s in sigs:
+                if is_commodity_symbol(s.symbol):
+                    continue
                 sec = sym_to_sector.get(s.symbol, "Unknown")
                 slot = agg[sec]
                 slot["sector"] = sec
@@ -328,36 +357,7 @@ def live_movers_impl(k: int = 15) -> Dict[str, Any]:
     """Today's Nifty 50 intraday movers (Upstox-first, yfinance fallback).
     Reuses the same scoring function as `/method-analysis/live-movers`."""
     try:
-        name_map = {m["symbol"]: m["name"] for m in stock_meta()}
-        symbols = all_symbols()
-        with session_scope() as db:
-            baseline = _baseline_prev_close_avg_vol(db, symbols)
-        ltps, volumes, prev_closes_feed, source = _fetch_quotes_nifty50(symbols)
-
-        inputs: List[movers_mod.MoverInput] = []
-        for sym in symbols:
-            last = ltps.get(sym)
-            if not last or last <= 0:
-                continue
-            prev_close, avg_vol = baseline.get(sym, (0.0, 0))
-            prev_close = prev_closes_feed.get(sym, prev_close) or prev_close
-            if prev_close <= 0:
-                continue
-            inputs.append(movers_mod.MoverInput(
-                symbol=sym, last_price=float(last), prev_close=float(prev_close),
-                volume=int(volumes.get(sym, 0)), avg_volume=max(avg_vol, 1),
-            ))
-        ranked = movers_mod.rank_top_k(inputs, k=max(1, min(k, 50)))
-        return {
-            "movers": [
-                {"rank": m.rank, "symbol": m.symbol, "name": name_map.get(m.symbol),
-                 "last_price": m.last_price, "pct_change": m.pct_change,
-                 "rvol": m.rvol, "score": m.score}
-                for m in ranked
-            ],
-            "source": source,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-        }
+        return method_service.get_live_movers(k=k)
     except Exception as exc:  # noqa: BLE001
         log.exception("live_movers_impl failed")
         return {"error": str(exc)}
@@ -485,6 +485,7 @@ __all__ = [
     "screener_signals_impl",
     "vix_level_impl",
     "market_regime_impl",
+    "market_trend_impl",
     "news_headlines_impl",
     "sector_rotation_impl",
     "live_movers_impl",

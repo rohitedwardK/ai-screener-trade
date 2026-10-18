@@ -172,6 +172,7 @@ def build_feature_matrix(
             all_meta.append({
                 "symbol": sym,
                 "date": df.index[i],
+                "label_end": df.index[i + forward_days],
                 "forward_return": fwd_ret,
                 "label": label,
             })

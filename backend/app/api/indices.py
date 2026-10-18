@@ -12,13 +12,15 @@ from sqlalchemy.orm import Session
 
 from ..analysis import option_chain_metrics as ocm
 from ..core.index_universe import all_index_symbols, get_index, index_meta
-from ..data import index_fetcher, index_repository as idx_repo, option_chain as oc_data
+from ..data import index_repository as idx_repo, live_quotes, option_chain as oc_data
 from ..db import get_db
 from ..models.index_orm import IndexStrikeRecommendation
 from ..models.index_schemas import (
     ContractRecommendationOut,
     IndexCandleOut,
     IndexDetailOut,
+    IndexForecastChartOut,
+    IndexForecastOut,
     IndexInstrumentOut,
     IndexRow,
     IndexSignalOut,
@@ -49,7 +51,7 @@ def _live_prices(symbols: List[str]) -> Dict[str, float]:
     with _lock:
         if key == _cache_keys and (now - _cache_at) < _LIVE_TTL:
             return dict(_cache)
-    result = index_fetcher.fetch_live_index_prices(symbols)
+    result = live_quotes.fetch_live_prices(symbols)
     if result:
         with _lock:
             _cache = dict(result)
@@ -59,6 +61,40 @@ def _live_prices(symbols: List[str]) -> Dict[str, float]:
 
 
 _RANGE_TO_BARS = {"1m": 22, "3m": 66, "6m": 132, "1y": 252, "2y": 504, "5y": 1260}
+
+
+def _forecast_chart_payload(intraday_df, support: Optional[float], resistance: Optional[float]) -> Dict[str, IndexForecastChartOut]:
+    if intraday_df is None or intraday_df.empty:
+        return {}
+    bars = intraday_df.sort_index().dropna(subset=["open", "high", "low", "close"]).tail(240)
+    if bars.empty:
+        return {}
+
+    out: Dict[str, IndexForecastChartOut] = {}
+    for timeframe in ("3min", "5min", "15min"):
+        grouped = (
+            bars.resample(timeframe)
+            .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+            .dropna(subset=["open", "high", "low", "close"])
+            .tail(80)
+        )
+        out[timeframe.replace("min", "m")] = IndexForecastChartOut(
+            timeframe=timeframe.replace("min", "m"),
+            bars=[
+                {
+                    "ts": ts.isoformat(),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"]),
+                }
+                for ts, row in grouped.iterrows()
+            ],
+            support=support,
+            resistance=resistance,
+        )
+    return out
 
 
 def _rec_to_schema(rec: IndexStrikeRecommendation) -> ContractRecommendationOut:
@@ -156,6 +192,29 @@ def prices(symbols: Optional[str] = Query(None)) -> Dict[str, float]:
     return _live_prices(syms)
 
 
+@router.get("/{symbol:path}/history", response_model=List[IndexCandleOut])
+def get_history(
+    symbol: str,
+    range: str = Query("1y", description="One of 1m/3m/6m/1y/2y/5y"),
+    db: Session = Depends(get_db),
+) -> List[IndexCandleOut]:
+    bars = _RANGE_TO_BARS.get(range, 252)
+    df = idx_repo.load_candles(db, symbol, limit=bars)
+    if df.empty:
+        return []
+    out: List[IndexCandleOut] = []
+    for ts, row in df.iterrows():
+        out.append(IndexCandleOut(
+            date=ts.date(),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row["volume"]),
+        ))
+    return out
+
+
 @router.get("/strike-recommendations/active", response_model=List[ContractRecommendationOut])
 def list_active_strike_recommendations(
     db: Session = Depends(get_db),
@@ -166,6 +225,35 @@ def list_active_strike_recommendations(
     `created_at` (already enforced in the repo helper)."""
     rows = idx_repo.active_recommendations(db)
     return [_rec_to_schema(r) for r in rows]
+
+
+@router.get(
+    "/{symbol:path}/strike-recommendations",
+    response_model=List[ContractRecommendationOut],
+)
+def get_strike_recommendations_route(
+    symbol: str,
+    signal_id: Optional[int] = Query(
+        None,
+        description="Specific signal ID. When omitted returns the recs for the latest signal of this index.",
+    ),
+    db: Session = Depends(get_db),
+) -> List[ContractRecommendationOut]:
+    instrument = idx_repo.get_index(db, symbol)
+    if instrument is None:
+        raise HTTPException(404, f"Index {symbol} not found")
+    if signal_id is None:
+        latest = idx_repo.signals_for_symbol(db, symbol, limit=1)
+        if not latest:
+            return []
+        signal_id = int(latest[0].id)
+    rows = idx_repo.recommendations_for_signal(db, signal_id)
+    return [_rec_to_schema(r) for r in rows]
+
+
+@router.get("/{symbol:path}/option-chain", response_model=OptionChainOut)
+def option_chain_route(symbol: str) -> OptionChainOut:
+    return option_chain(symbol)
 
 
 @router.get("/{symbol:path}", response_model=IndexDetailOut)
@@ -192,34 +280,21 @@ def get_index_detail(symbol: str, db: Session = Depends(get_db)) -> IndexDetailO
     snap_out: Optional[IndexSnapshotOut] = (
         IndexSnapshotOut.model_validate(snap) if snap is not None else None
     )
+    from ..analysis.index_forecast import evaluate
+    from ..data import index_csv_store
+    intraday_df = index_csv_store.load(symbol, intraday=True)
+    forecast = evaluate(index_csv_store.load(symbol), intraday_df)
     return IndexDetailOut(
         instrument=IndexInstrumentOut.model_validate(instrument),
         snapshot=snap_out,
         signals=signals_out,
+        forecast=IndexForecastOut.model_validate(forecast.__dict__),
+        forecast_chart=_forecast_chart_payload(
+            intraday_df,
+            support=forecast.breakdown_level,
+            resistance=forecast.breakout_level,
+        ),
     )
-
-
-@router.get("/{symbol:path}/history", response_model=List[IndexCandleOut])
-def get_history(
-    symbol: str,
-    range: str = Query("1y", description="One of 1m/3m/6m/1y/2y/5y"),
-    db: Session = Depends(get_db),
-) -> List[IndexCandleOut]:
-    bars = _RANGE_TO_BARS.get(range, 252)
-    df = idx_repo.load_candles(db, symbol, limit=bars)
-    if df.empty:
-        return []
-    out: List[IndexCandleOut] = []
-    for ts, row in df.iterrows():
-        out.append(IndexCandleOut(
-            date=ts.date(),
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
-            volume=float(row["volume"]),
-        ))
-    return out
 
 
 @router.get(

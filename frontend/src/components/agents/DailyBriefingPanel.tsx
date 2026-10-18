@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi } from "@/api/client";
 import type { DailyBriefing, EventImpact, UpcomingEvent, VixBand } from "@/api/types";
 import { EVENT_CATEGORY_LABEL, EVENT_IMPACT_TONE } from "@/api/types";
+import { BriefingMarkdown, briefingExcerpt, humanEnumLabel } from "@/lib/briefingMarkdown";
 import { fmt, formatDateTimeIST, formatTimeIST, symbolDisplay } from "@/lib/format";
 
 const VIX_BAND_TONE: Record<VixBand, string> = {
@@ -94,6 +95,7 @@ function CompactBriefing({ briefing, onRefresh, fetching }: {
   fetching: boolean;
 }) {
   const vixBand = (briefing.vix_band ?? "UNKNOWN") as VixBand;
+  const excerpt = briefingExcerpt(briefing.market_summary_md);
   return (
     <div className="card p-3 flex flex-wrap items-center gap-3 text-sm">
       <div className="flex items-center gap-2">
@@ -104,10 +106,10 @@ function CompactBriefing({ briefing, onRefresh, fetching }: {
         </span>
       </div>
       <span className={`px-2 py-0.5 rounded-full text-[11px] ${REGIME_TONE[briefing.regime] ?? REGIME_TONE.UNKNOWN}`}>
-        Regime: {briefing.regime}
+        Regime: {humanEnumLabel(briefing.regime)}
       </span>
       <span className={`px-2 py-0.5 rounded-full text-[11px] border ${VIX_BAND_TONE[vixBand]}`}>
-        VIX: {briefing.vix_value != null ? fmt.num(briefing.vix_value, 2) : "n/a"} ({vixBand})
+        VIX: {briefing.vix_value != null ? fmt.num(briefing.vix_value, 2) : "n/a"} ({humanEnumLabel(vixBand)})
       </span>
       <span className="text-[11px] text-fg-muted">
         Trend: <span className="text-fg">{briefing.market_trend ?? "—"}</span>
@@ -130,6 +132,11 @@ function CompactBriefing({ briefing, onRefresh, fetching }: {
         <RefreshCcw className="size-3.5" />
         Refresh
       </button>
+      {excerpt && (
+        <p className="basis-full text-[12px] text-fg-muted leading-snug">
+          {excerpt}
+        </p>
+      )}
     </div>
   );
 }
@@ -189,10 +196,10 @@ function FullBriefing({
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className={`px-2.5 py-1 rounded-full text-xs ${REGIME_TONE[briefing.regime] ?? REGIME_TONE.UNKNOWN}`}>
-            Regime: {briefing.regime}
+            Regime: {humanEnumLabel(briefing.regime)}
           </span>
           <span className={`px-2.5 py-1 rounded-full text-xs border ${VIX_BAND_TONE[vixBand]}`}>
-            India VIX: {briefing.vix_value != null ? fmt.num(briefing.vix_value, 2) : "n/a"} ({vixBand})
+            India VIX: {briefing.vix_value != null ? fmt.num(briefing.vix_value, 2) : "n/a"} ({humanEnumLabel(vixBand)})
           </span>
           <span className="px-2.5 py-1 rounded-full text-xs bg-bg-elevated text-fg">
             Trend: {briefing.market_trend ?? "—"}
@@ -200,8 +207,9 @@ function FullBriefing({
         </div>
 
         {briefing.market_summary_md && (
-          <div className="prose prose-invert max-w-none text-sm whitespace-pre-wrap leading-relaxed">
-            {briefing.market_summary_md}
+          <div>
+            <h3 className="text-[11px] uppercase tracking-wide text-fg-subtle mb-2">Market report</h3>
+            <BriefingMarkdown source={briefing.market_summary_md} />
           </div>
         )}
       </div>
@@ -251,7 +259,7 @@ function FullBriefing({
                       </div>
                     </td>
                     <td className="py-1.5 pr-2 text-[11px] text-fg-muted">
-                      {p.vote_count}/4 · {p.votes.join(", ")}
+                      {p.vote_count} votes · {p.votes.join(", ")}
                     </td>
                     <td className="py-1.5 pr-2 num">{fmt.num(p.score, 1)}</td>
                     <td className="py-1.5 pr-2 num">{fmt.num(p.mean_confidence, 2)}</td>

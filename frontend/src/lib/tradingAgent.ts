@@ -38,11 +38,6 @@ function pctDistance(from: number, to: number): number | null {
   return ((to - from) / from) * 100;
 }
 
-/** For a long, negative distance means price is below the level. */
-function longDistancePct(live: number, level: number): number | null {
-  return pctDistance(live, level);
-}
-
 function pickScreenerRow(
   rows: ScreenerRow[],
   symbol: string,
@@ -58,7 +53,7 @@ function pickScreenerRow(
 }
 
 /**
- * Deterministic exit rule engine for paper longs. Uses the levels captured at
+ * Deterministic exit rule engine for directional paper positions. Uses the levels captured at
  * buy time first; optionally incorporates the current screener live-verifier
  * status when the symbol still appears in the run.
  */
@@ -93,52 +88,53 @@ export function evaluateOpenTrade(
   const inv = trade.invalidation;
   const t1 = trade.target1;
   const t2 = trade.target2;
+  const isShort = trade.direction === "SHORT";
 
   if (stop != null) {
-    base.distanceToStopPct = longDistancePct(livePrice, stop);
+    base.distanceToStopPct = pctDistance(livePrice, stop);
   }
   if (t1 != null) {
-    base.distanceToTargetPct = longDistancePct(livePrice, t1);
+    base.distanceToTargetPct = pctDistance(livePrice, t1);
   }
   if (inv != null) {
-    base.distanceToInvalidationPct = longDistancePct(livePrice, inv);
+    base.distanceToInvalidationPct = pctDistance(livePrice, inv);
   }
 
   // Hard exits — price has crossed a recorded plan level.
-  if (stop != null && livePrice <= stop) {
+  if (stop != null && (isShort ? livePrice >= stop : livePrice <= stop)) {
     return {
       ...base,
       status: "EXIT_NOW",
       action: "STOP_LOSS",
       exitPrice: livePrice,
-      message: `Live ${livePrice.toFixed(2)} at/below stop ${stop.toFixed(2)} — book stop loss.`,
+      message: `Live ${livePrice.toFixed(2)} crossed stop ${stop.toFixed(2)} — close the ${trade.direction.toLowerCase()} thesis.`,
     };
   }
-  if (inv != null && livePrice < inv) {
+  if (inv != null && (isShort ? livePrice > inv : livePrice < inv)) {
     return {
       ...base,
       status: "EXIT_NOW",
       action: "INVALIDATION",
       exitPrice: livePrice,
-      message: `Live ${livePrice.toFixed(2)} below invalidation ${inv.toFixed(2)} — thesis broken.`,
+      message: `Live ${livePrice.toFixed(2)} crossed invalidation ${inv.toFixed(2)} — thesis broken.`,
     };
   }
-  if (t2 != null && livePrice >= t2) {
+  if (t2 != null && (isShort ? livePrice <= t2 : livePrice >= t2)) {
     return {
       ...base,
       status: "EXIT_NOW",
       action: "TARGET_2",
       exitPrice: livePrice,
-      message: `Live ${livePrice.toFixed(2)} at/above target 2 ${t2.toFixed(2)} — book profit.`,
+      message: `Live ${livePrice.toFixed(2)} reached target 2 ${t2.toFixed(2)} — book profit.`,
     };
   }
-  if (t1 != null && livePrice >= t1) {
+  if (t1 != null && (isShort ? livePrice <= t1 : livePrice >= t1)) {
     return {
       ...base,
       status: "EXIT_NOW",
       action: "TARGET_1",
       exitPrice: livePrice,
-      message: `Live ${livePrice.toFixed(2)} at/above target 1 ${t1.toFixed(2)} — book profit.`,
+      message: `Live ${livePrice.toFixed(2)} reached target 1 ${t1.toFixed(2)} — book profit.`,
     };
   }
 
@@ -164,8 +160,8 @@ export function evaluateOpenTrade(
   // Proximity warnings.
   if (
     base.distanceToStopPct != null &&
-    base.distanceToStopPct < 0 &&
-    base.distanceToStopPct >= -NEAR_LEVEL_PCT
+    (isShort ? base.distanceToStopPct > 0 : base.distanceToStopPct < 0) &&
+    Math.abs(base.distanceToStopPct) <= NEAR_LEVEL_PCT
   ) {
     return {
       ...base,
@@ -175,8 +171,8 @@ export function evaluateOpenTrade(
   }
   if (
     base.distanceToTargetPct != null &&
-    base.distanceToTargetPct > 0 &&
-    base.distanceToTargetPct <= NEAR_LEVEL_PCT
+    (isShort ? base.distanceToTargetPct < 0 : base.distanceToTargetPct > 0) &&
+    Math.abs(base.distanceToTargetPct) <= NEAR_LEVEL_PCT
   ) {
     return {
       ...base,

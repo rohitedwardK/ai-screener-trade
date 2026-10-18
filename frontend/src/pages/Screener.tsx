@@ -1,7 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { api, liveVerificationApi } from "@/api/client";
+import { Link, useSearchParams } from "react-router-dom";
+import { api, liveVerificationApi, qualityApi } from "@/api/client";
+import { fmt, symbolDisplay } from "@/lib/format";
 import { CATEGORY_LABELS, LIVE_STATUS_LABEL, LIVE_STATUS_TONE } from "@/api/types";
 import type {
   LiveVerificationStatus,
@@ -9,7 +10,7 @@ import type {
 } from "@/api/types";
 import { ScreenerTable } from "@/components/ScreenerTable";
 import { LiveVerificationBanner } from "@/components/LiveVerificationBanner";
-import { Loader2, RefreshCw } from "lucide-react";
+import { BrainCircuit, Loader2, RefreshCw } from "lucide-react";
 
 const PRICE_REFRESH_INTERVAL = 60_000;
 const LIVE_SUMMARY_REFRESH_INTERVAL = 90_000;
@@ -48,6 +49,20 @@ export function Screener() {
   const liveStatus = params.get("live_status") ?? "";
   const includeInvalidated = params.get("include_invalidated") === "1";
   const [isReverifying, setIsReverifying] = useState(false);
+  const [trainingSource, setTrainingSource] = useState<"archive" | "historical">("historical");
+  const quality = useQuery({
+    queryKey: ["trade-quality-status"], queryFn: qualityApi.status,
+    refetchInterval: query => query.state.data?.status === "training" ? 2000 : 30000,
+  });
+  const trainQuality = useMutation({
+    mutationFn: qualityApi.train,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["trade-quality-status"] }),
+  });
+  useEffect(() => {
+    if (quality.data && quality.data.status !== "training") {
+      void queryClient.invalidateQueries({ queryKey: ["screener"] });
+    }
+  }, [quality.data?.status, quality.data?.model, queryClient]);
 
   const setParam = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);
@@ -101,6 +116,11 @@ export function Screener() {
     if (!data) return [] as string[];
     return [...new Set(data.map((r) => r.symbol))];
   }, [data]);
+  const focusCandidates = useMemo(() => {
+    const ranked = (data ?? []).filter((row) => ["MOMENTUM_LEADER", "FRESH_BREAKOUT", "INTRADAY_WATCH_TOMORROW"].includes(row.category))
+      .sort((a, b) => b.score - a.score || (b.adx ?? 0) - (a.adx ?? 0));
+    return ranked.filter((row, index) => ranked.findIndex((other) => other.symbol === row.symbol) === index).slice(0, 5);
+  }, [data]);
 
   const {
     data: priceMap,
@@ -130,6 +150,46 @@ export function Screener() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border pb-3 text-sm">
+        <label className="text-xs text-fg-muted">Quality training source
+          <select className="input block mt-1" value={trainingSource} disabled={quality.data?.status === "training"} onChange={(event) => setTrainingSource(event.target.value as "archive" | "historical")}>
+            <option value="historical">5-year historical reconstruction</option>
+            <option value="archive">Recorded observations</option>
+          </select>
+        </label>
+        <button className="btn" type="button" onClick={() => trainQuality.mutate(trainingSource)}
+          disabled={trainQuality.isPending || quality.data?.status === "training"}>
+          <BrainCircuit className="size-4" />
+          {quality.data?.status === "training" ? "Training quality model" : "Train quality model"}
+        </button>
+        <span className="text-fg-muted" role="status">{quality.data?.message}</span>
+        {quality.data?.model && <span className="num text-xs text-fg-muted">
+          {quality.data.model.source === "historical" ? "Reconstructed history" : "Recorded observations"}{" | "}
+          {fmt.num(quality.data.model.samples, 0)} samples · Test AUC {fmt.num(quality.data.model.test_auc, 3)}
+          {" · "}Brier {fmt.num(quality.data.model.test_brier, 3)} / baseline {fmt.num(quality.data.model.baseline_brier, 3)}
+        </span>}
+        {(quality.isError || trainQuality.isError) && <span role="alert" className="text-accent-red">Quality service unavailable. Retry training or refresh.</span>}
+      </div>
+      {quality.data?.data && <section className="border-b border-border pb-4 space-y-2 text-sm">
+        <p><span className="font-medium">Daily price coverage: </span>{fmt.int(quality.data.data.coverage.filter((row) => row.five_year_span).length)} / {fmt.int(quality.data.data.coverage.length)} configured stocks span five years.</p>
+        <p className="text-xs text-fg-muted">Recorded signal archive: {fmt.int(quality.data.data.archive_observations)} observations across {fmt.int(quality.data.data.archive_dates)} dates. Recorded-observation training needs at least {fmt.int(quality.data.data.required_dates)} mature dates plus five subsequent trading sessions for each outcome.</p>
+        <p className="text-xs text-fg-muted">Historical training rebuilds weekly setups from cached daily prices. These are reconstructed observations, not historical live-verification records. Testing uses later dates; today's stock universe introduces survivorship bias.</p>
+        {quality.data.model?.limitations && <p className="text-xs text-accent-amber">{quality.data.model.limitations}</p>}
+        <details><summary className="cursor-pointer text-xs text-fg-muted">Per-stock data coverage</summary><div className="overflow-x-auto mt-2">
+          <table className="w-full text-xs text-left"><thead><tr className="border-b border-border"><th className="py-2">Stock</th><th>Daily rows</th><th>First date</th><th>Last date</th><th>Checks</th></tr></thead><tbody>
+            {quality.data.data.coverage.map((row) => <tr key={row.symbol} className="border-b border-border"><td className="py-2"><Link className="text-accent-cyan" to={`/stock/${encodeURIComponent(row.symbol)}#daily-forecast`}>{symbolDisplay(row.symbol)}</Link></td><td className="num">{fmt.int(row.rows)}</td><td>{row.start ?? "Unavailable"}</td><td>{row.end ?? "Unavailable"}</td><td>{row.missing_values || row.duplicate_dates ? "Incomplete / duplicate rows" : row.stale ? "Stale cache" : row.five_year_span ? "Five-year span" : "Short history"}</td></tr>)}
+          </tbody></table>
+        </div></details>
+      </section>}
+      {focusCandidates.length > 0 && <section className="border-b border-border pb-4 space-y-2">
+        <h2 className="font-semibold text-sm">Momentum research shortlist</h2>
+        <div className="divide-y divide-border">
+          {focusCandidates.map((row) => <div key={row.symbol} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+            <div><span className="font-medium">{symbolDisplay(row.symbol)}</span><span className="text-xs text-fg-muted ml-2">{CATEGORY_LABELS[row.category]} | Score {fmt.num(row.score, 0)}</span></div>
+            <Link className="text-accent-cyan text-xs underline" to={`/stock/${encodeURIComponent(row.symbol)}#daily-forecast`}>View forecast and price history</Link>
+          </div>)}
+        </div>
+      </section>}
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Screener</h1>

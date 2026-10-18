@@ -1,30 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { CATEGORY_LABELS, CATEGORY_TONE } from "@/api/types";
 import { Badge } from "@/components/Badge";
 import { PriceChart } from "@/components/PriceChart";
+import { DailyForecastPanel } from "@/components/DailyForecastPanel";
 import { IndicatorPanel } from "@/components/IndicatorPanel";
 import { AIExplain } from "@/components/AIExplain";
 import { fmt, regimeTone, scoreTone, symbolDisplay } from "@/lib/format";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
-const RANGES = ["3m", "6m", "1y", "2y", "5y"];
-
 export function StockDetail() {
   const { symbol = "" } = useParams();
-  const [params, setParams] = useSearchParams();
-  const range = params.get("range") ?? "1y";
+
+  const isCommodity = symbol.endsWith(".MCX");
 
   const detail = useQuery({
     queryKey: ["stock", symbol],
     queryFn: () => api.getStock(symbol),
     enabled: !!symbol,
+    refetchInterval: isCommodity ? 60_000 : false,
   });
 
   const history = useQuery({
-    queryKey: ["history", symbol, range],
-    queryFn: () => api.getHistory(symbol, range),
+    queryKey: ["history", symbol, "5y"],
+    queryFn: () => api.getHistory(symbol, "5y"),
     enabled: !!symbol,
   });
 
@@ -48,6 +48,10 @@ export function StockDetail() {
 
   const { stock, snapshot, signals } = detail.data;
   const topSignal = signals[0];
+  const headline = detail.data.live_price ?? snapshot?.close ?? null;
+  const dailyClose = snapshot?.close ?? null;
+  const showDailyClose =
+    headline != null && dailyClose != null && Math.abs(headline - dailyClose) >= 0.5;
 
   return (
     <div className="space-y-6">
@@ -64,6 +68,9 @@ export function StockDetail() {
               {symbolDisplay(stock.symbol)}
             </h1>
             <span className="text-fg-muted">{stock.name ?? ""}</span>
+            {detail.data.contract_label && (
+              <Badge tone="muted">{detail.data.contract_label}</Badge>
+            )}
             {stock.sector && <Badge tone="muted">{stock.sector}</Badge>}
           </div>
           {snapshot && (
@@ -75,6 +82,9 @@ export function StockDetail() {
                 <>
                   <Badge tone={CATEGORY_TONE[topSignal.category] ?? "muted"}>
                     {CATEGORY_LABELS[topSignal.category] ?? topSignal.category}
+                  </Badge>
+                  <Badge tone={topSignal.direction === "LONG" ? "green" : topSignal.direction === "SHORT" ? "red" : "muted"}>
+                    {topSignal.direction ?? "WAIT"}
                   </Badge>
                   <Badge tone={scoreTone(topSignal.score)}>
                     Score {fmt.num(topSignal.score, 0)}
@@ -90,12 +100,22 @@ export function StockDetail() {
             </div>
           )}
         </div>
-        {snapshot && (
+        {headline != null && (
           <div className="text-right">
             <div className="text-3xl num font-semibold">
-              {fmt.inr(snapshot.close)}
+              {fmt.inr(headline)}
             </div>
-            {snapshot.indicators_json?.["return_20d"] != null && (
+            {detail.data.live_price != null && (
+              <div className="text-xs text-fg-subtle">
+                Live{detail.data.quote_source ? ` · ${detail.data.quote_source}` : ""}
+              </div>
+            )}
+            {showDailyClose && snapshot && (
+              <div className="text-xs text-fg-muted num">
+                Daily close {fmt.inr(dailyClose)} · {snapshot.as_of_date}
+              </div>
+            )}
+            {snapshot?.indicators_json?.["return_20d"] != null && (
               <div
                 className={`num text-sm ${
                   (snapshot.indicators_json["return_20d"] ?? 0) >= 0
@@ -110,23 +130,19 @@ export function StockDetail() {
         )}
       </header>
 
-      <div className="flex items-center gap-2 flex-wrap">
-        {RANGES.map((r) => (
-          <button
-            key={r}
-            onClick={() => {
-              const next = new URLSearchParams(params);
-              next.set("range", r);
-              setParams(next, { replace: true });
-            }}
-            className={`chip ${range === r ? "chip-active" : ""}`}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
+      <DailyForecastPanel symbol={symbol} candles={history.data ?? []} historyLoading={history.isLoading} />
 
-      <PriceChart candles={history.data ?? []} />
+      {history.isLoading ? (
+        <div className="card flex h-72 items-center justify-center gap-2 text-fg-muted">
+          <Loader2 className="size-4 animate-spin" />
+          Loading 5-year history...
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-xs text-fg-muted">Daily 5-year history</div>
+          <PriceChart candles={history.data ?? []} />
+        </div>
+      )}
 
       {snapshot && <IndicatorPanel snapshot={snapshot} />}
 
@@ -134,11 +150,20 @@ export function StockDetail() {
         <div className="lg:col-span-2 space-y-4">
           {topSignal ? (
             <div className="card p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-3 gap-2">
                 <h3 className="font-semibold">Top signal</h3>
-                <Badge tone={CATEGORY_TONE[topSignal.category] ?? "muted"}>
-                  {CATEGORY_LABELS[topSignal.category] ?? topSignal.category}
-                </Badge>
+                <div className="flex flex-wrap gap-1.5 justify-end">
+                  {topSignal.horizon && (
+                    <Badge tone={topSignal.horizon === "MONTHLY_ON_MONTHLY" ? "amber" : "violet"}>
+                      {topSignal.horizon === "MONTHLY_ON_MONTHLY"
+                        ? `Next expiry · ${topSignal.days_to_expiry ?? "?"}d`
+                        : `Scalp · ${topSignal.days_to_expiry ?? 2}d`}
+                    </Badge>
+                  )}
+                  <Badge tone={CATEGORY_TONE[topSignal.category] ?? "muted"}>
+                    {CATEGORY_LABELS[topSignal.category] ?? topSignal.category}
+                  </Badge>
+                </div>
               </div>
 
               {topSignal.entry != null && (
@@ -191,9 +216,22 @@ export function StockDetail() {
               )}
             </div>
           ) : (
-            <div className="card p-4 text-fg-muted text-sm">
-              No active signal for this stock — it didn't pass any rule thresholds in
-              the latest run.
+            <div className="card p-4 text-fg-muted text-sm space-y-2">
+              {(detail.data.watch_notes ?? []).length > 0 ? (
+                <>
+                  <div className="font-medium">No scalp or next-expiry setup — levels to watch</div>
+                  <ul className="space-y-1.5 list-none">
+                    {(detail.data.watch_notes ?? []).map((note, i) => (
+                      <li key={i} className="pl-3 border-l-2 border-border">{note}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <div>
+                  No active signal for this stock — it didn't pass any rule thresholds in
+                  the latest run.
+                </div>
+              )}
             </div>
           )}
 
@@ -214,6 +252,31 @@ export function StockDetail() {
                         {fmt.num(s.score, 0)}
                       </Badge>
                     </div>
+                    {s.horizon && (
+                      <div className="mt-2">
+                        <Badge tone={s.horizon === "MONTHLY_ON_MONTHLY" ? "amber" : "violet"}>
+                          {s.horizon === "MONTHLY_ON_MONTHLY"
+                            ? `Next expiry · ${s.days_to_expiry ?? "?"}d`
+                            : `Scalp · ${s.days_to_expiry ?? 2}d`}
+                        </Badge>
+                      </div>
+                    )}
+                    {s.entry != null && (
+                      <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
+                        <div>
+                          <div className="text-fg-subtle">Entry</div>
+                          <div className="num">{fmt.inr(s.entry)}</div>
+                        </div>
+                        <div>
+                          <div className="text-fg-subtle">Stop</div>
+                          <div className="num text-accent-red">{fmt.inr(s.stop_loss)}</div>
+                        </div>
+                        <div>
+                          <div className="text-fg-subtle">Target</div>
+                          <div className="num text-accent-green">{fmt.inr(s.target_1)}</div>
+                        </div>
+                      </div>
+                    )}
                     {s.reasons_json?.length > 0 && (
                       <ul className="text-xs text-fg-muted mt-2 list-disc ml-4">
                         {s.reasons_json.slice(0, 3).map((r, i) => (

@@ -57,6 +57,7 @@ class AgentRun(Base):
     status = Column(String, nullable=False, default=RUN_STATUS_RUNNING)
     head_agent_status = Column(String, nullable=True)
     worker_statuses_json = Column(JSON, nullable=False, default=dict)
+    json_statuses_json = Column(JSON, nullable=True, default=dict)
     duration_s = Column(Float, nullable=True)
     triggered_by = Column(String, nullable=True)
     error = Column(Text, nullable=True)
@@ -65,6 +66,53 @@ class AgentRun(Base):
         Index("ix_agent_runs_runat", "run_at"),
         Index("ix_agent_runs_cycle", "cycle_type", "run_at"),
     )
+
+
+class ResearchRun(Base):
+    """Immutable research evidence and selections; no position state."""
+
+    __tablename__ = "research_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    asset_class = Column(String, nullable=False)
+    horizon = Column(String, nullable=False)
+    result_json = Column(JSON, nullable=False)
+
+
+class PendingAgentTask(Base):
+    """One coalesced monitor request awaiting a successful AI briefing."""
+
+    __tablename__ = "pending_agent_tasks"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+    symbols_json = Column(JSON, nullable=False, default=list)
+    reason = Column(String, nullable=False, default="monitor")
+
+
+class AITask(Base):
+    """Durable request for optional local Ollama analysis."""
+
+    __tablename__ = "ai_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_type = Column(String, nullable=False)
+    dedupe_key = Column(String, nullable=False, unique=True)
+    status = Column(String, nullable=False, default="PENDING")
+    payload_json = Column(JSON, nullable=False, default=dict)
+    result_json = Column(JSON, nullable=True)
+    briefing_id = Column(Integer, nullable=True)
+    research_run_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    next_attempt_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    lease_until = Column(DateTime, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    error = Column(String, nullable=True)
+
+    __table_args__ = (Index("ix_ai_tasks_due", "status", "next_attempt_at"),)
 
 
 class DailyBriefing(Base):
@@ -115,6 +163,8 @@ class DailyBriefing(Base):
 __all__ = [
     "AgentRun",
     "DailyBriefing",
+    "PendingAgentTask",
+    "AITask",
     "CYCLE_DEEP",
     "CYCLE_FAST",
     "CYCLE_BOOT",

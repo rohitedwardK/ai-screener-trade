@@ -1,20 +1,21 @@
 """APScheduler entry-points for the agentic layer.
 
-Three jobs are registered from `core.scheduler`:
+Four jobs are registered from `core.scheduler`:
 
     1. agentic-deep-cycle    — every AGENTIC_DEEP_CYCLE_MIN min, Mon-Fri 09-15
-                               IST. Runs the full crew (Data → Analysis →
-                               Context → Head) and persists a briefing.
+                               IST. Runs deterministic workers and persists a
+                               briefing before optional AI work is queued.
     2. agentic-fast-monitor  — every minute Mon-Fri 09-15 IST. Deterministic
                                60-sec body that wakes the deep cycle on
                                material change (invalidation breach, new
                                top mover, deep-cycle overdue).
-    3. agentic-weekly-retrain — Sunday 22:00 IST. Re-fits RF + GBM + LSTM
+    3. agentic-weekly-retrain — Sunday 22:00 IST. Re-fits Random Forest
                                 so the user never needs to click Train.
+    4. agentic-ai-tasks       — every minute, including after market hours.
+                                Processes one pending Ollama task when ready.
 
 Each job is exception-safe — failures log but never crash the scheduler.
-A re-entrant `_deep_lock` prevents two deep cycles running concurrently
-(LLM-on-CPU would otherwise queue indefinitely).
+A `_deep_lock` prevents two worker cycles running concurrently.
 """
 from __future__ import annotations
 
@@ -22,52 +23,60 @@ import logging
 import threading
 from typing import Optional
 
-from ..analysis import ml_gbm, ml_lstm, ml_rf
+from ..analysis import ml_rf
 from ..config import get_settings
+from ..db import session_scope
 from ..live_analysis import service as live_service
+from ..models.agent_orm import PendingAgentTask
+from . import ai_tasks
 from . import monitoring_agent as monitor_mod
 from . import orchestrator
 
 log = logging.getLogger(__name__)
 
 _deep_lock = threading.Lock()
-_pending_deep_request: bool = False
-_pending_lock = threading.Lock()
-
-
 def _trigger_deep_cycle_now() -> None:
-    """Set a flag the next deep-cycle tick checks. Avoids running an LLM
-    cycle from the 60-sec fast monitor thread (CPU contention)."""
-    global _pending_deep_request
-    with _pending_lock:
-        _pending_deep_request = True
-    log.info("agentic: fast monitor flagged deep-cycle as needed")
+    """Schedule deterministic workers after a material monitor change."""
+    from ..core import scheduler as core_scheduler
+
+    sched = core_scheduler._scheduler
+    if sched is not None and not is_deep_cycle_running():
+        sched.add_job(run_deep_cycle_job, kwargs={"force": True},
+                      id="agentic-triggered-worker-cycle", replace_existing=True,
+                      coalesce=True, max_instances=1)
 
 
-def _consume_deep_request() -> bool:
-    global _pending_deep_request
-    with _pending_lock:
-        flag = _pending_deep_request
-        _pending_deep_request = False
-    return flag
+def pending_task(db) -> Optional[PendingAgentTask]:
+    return db.get(PendingAgentTask, 1)
 
 
-def run_deep_cycle_job(*, force: bool = False) -> None:
+def handle_fast_result(result: monitor_mod.FastTickResult) -> None:
+    if result.triggered_deep_cycle:
+        log.info("agentic: monitor requested worker cycle: %s", result.note)
+
+
+def run_deep_cycle_job(*, force: bool = False, use_llm: bool = True, triggered_by: str | None = None) -> None:
     """Scheduler entrypoint for the 15-min deep cycle.
 
     Short-circuits when:
         - market is closed AND `force` is False AND there is no pending request
         - another deep cycle is already running
     """
-    if not force and not _consume_deep_request() and not live_service.is_market_open():
+    if not force and not live_service.is_market_open():
         return
-
     if not _deep_lock.acquire(blocking=False):
         log.info("agentic: deep cycle already running; skipping this tick")
         return
 
     try:
-        result = orchestrator.run_deep_cycle(triggered_by="scheduler")
+        result = orchestrator.run_deep_cycle(
+            triggered_by=triggered_by or ("monitor" if force else "scheduler"),
+            use_llm=use_llm,
+        )
+        with session_scope() as db:
+            legacy = pending_task(db)
+            if legacy is not None:
+                db.delete(legacy)
         log.info(
             "agentic-deep-cycle: status=%s duration=%.1fs picks=%d",
             result.status, result.duration_s, len(result.top_picks),
@@ -81,32 +90,24 @@ def run_deep_cycle_job(*, force: bool = False) -> None:
 def run_fast_monitor_job() -> None:
     """Scheduler entrypoint for the 60-sec fast monitor. Deterministic body
     that only wakes the deep cycle on triggers."""
-    if not live_service.is_market_open():
-        return
     try:
-        result = monitor_mod.run_fast_tick(
-            trigger_deep_cycle_callback=_trigger_deep_cycle_now,
-        )
-        log.info(
-            "agentic-fast-monitor: movers=%d note=%s triggered_deep=%s",
-            result.movers_count, result.note, result.triggered_deep_cycle,
-        )
+        if live_service.is_market_open():
+            result = monitor_mod.run_fast_tick(trigger_deep_cycle_callback=_trigger_deep_cycle_now)
+            handle_fast_result(result)
+            log.info("agentic-fast-monitor: movers=%d note=%s", result.movers_count, result.note)
     except Exception:  # noqa: BLE001
         log.exception("agentic-fast-monitor: unhandled error")
 
 
 def run_weekly_retrain_job() -> None:
-    """Scheduler entrypoint for Sunday 22:00 IST retrain. Re-fits RF + GBM +
-    LSTM so the user never needs to manually click Train."""
-    log.info("agentic-weekly-retrain: starting RF + GBM + LSTM refit")
+    """Scheduler entrypoint for Sunday 22:00 IST retrain. Re-fits Random Forest so the user never needs to manually click Train."""
+    log.info("agentic-weekly-retrain: starting Random Forest refit")
     settings = get_settings()
     if not settings.AGENTIC_ENABLED:
         log.info("agentic-weekly-retrain: AGENTIC_ENABLED=false, skipping")
         return
     for name, train_fn in (
         ("rf", ml_rf.train),
-        ("gbm", ml_gbm.train),
-        ("lstm", ml_lstm.train),
     ):
         try:
             train_fn()
@@ -125,6 +126,10 @@ def run_boot_cycle_job() -> None:
     try:
         log.info("agentic-boot-cycle: running on-startup deep cycle")
         result = orchestrator.run_boot_cycle()
+        with session_scope() as db:
+            legacy = pending_task(db)
+            if legacy is not None:
+                db.delete(legacy)
         log.info(
             "agentic-boot-cycle: status=%s duration=%.1fs picks=%d",
             result.status, result.duration_s, len(result.top_picks),
@@ -145,8 +150,14 @@ def is_deep_cycle_running() -> bool:
 
 
 def has_pending_deep_request() -> bool:
-    with _pending_lock:
-        return _pending_deep_request
+    return False
+
+
+def run_ai_task_job() -> None:
+    try:
+        ai_tasks.process_one()
+    except Exception:  # noqa: BLE001
+        log.exception("ai-task-processor: unhandled error")
 
 
 __all__ = [
@@ -156,4 +167,5 @@ __all__ = [
     "run_boot_cycle_job",
     "is_deep_cycle_running",
     "has_pending_deep_request",
+    "run_ai_task_job",
 ]

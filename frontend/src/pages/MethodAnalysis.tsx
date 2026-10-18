@@ -36,29 +36,11 @@ const METHODS: MethodConfig[] = [
   {
     id: "rf",
     label: "Random Forest",
-    description: "Bagging ensemble — sklearn RandomForestClassifier on the same features and labels as GBM.",
+    description: "Bagging ensemble — sklearn RandomForestClassifier on historical technical indicators.",
     tagline: "RandomForest · ~6 min training",
     trainable: true,
     trainId: "rf",
     estimatedTrainTime: "≈ 6 min",
-  },
-  {
-    id: "gbm",
-    label: "GBM",
-    description: "Gradient boosting — sklearn GradientBoostingClassifier (boosted trees, different bias/variance than RF).",
-    tagline: "GradBoost · ~5 min training",
-    trainable: true,
-    trainId: "gbm",
-    estimatedTrainTime: "≈ 5 min",
-  },
-  {
-    id: "lstm",
-    label: "LSTM Neural Net",
-    description: "PyTorch LSTM reads 20-day sequences of RSI, MACD, volume, ATR and EMA distance.",
-    tagline: "PyTorch · Sequence model · 30–90 min training",
-    trainable: true,
-    trainId: "lstm",
-    estimatedTrainTime: "30–90 min",
   },
 ];
 
@@ -365,8 +347,8 @@ export function MethodAnalysis() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Method Analysis</h1>
         <p className="text-fg-muted text-sm mt-1">
-          Compare Rule-Based, Random Forest, gradient boosting (GBM), and LSTM side-by-side on Nifty 50.
-          Train each ML model, then click <strong>Start Analysis</strong> to compare outputs and live-mover overlap.
+          Focus on Random Forest predictions with a rule-based baseline.
+          Train Random Forest, then click <strong>Start Analysis</strong> to compare outputs and live-mover overlap.
         </p>
       </div>
 
@@ -454,8 +436,7 @@ export function MethodAnalysis() {
         </div>
       )}
 
-      {/* 3-column grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-6 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         {METHODS.map((cfg) => (
           <MethodColumn
             key={cfg.id}

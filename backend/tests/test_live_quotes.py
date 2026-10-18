@@ -62,8 +62,7 @@ def test_upstox_covers_everything_skips_yfinance():
 
     assert out == {"AAA.NS": 100.0, "BBB.NS": 200.0}
     assert live_quotes.last_source() == live_quotes.SOURCE_UPSTOX
-    yf_mock.assert_called_once()
-    assert yf_mock.call_args.args[0] == []  # no yfinance work needed
+    yf_mock.assert_not_called()
 
 
 def test_upstox_unknown_symbols_route_to_yfinance():
@@ -111,7 +110,7 @@ def test_repeated_call_within_ttl_uses_cache_and_does_not_refetch():
         out2 = live_quotes.fetch_live_prices(["AAA.NS"])
 
     assert out1 == out2 == {"AAA.NS": 100.0}
-    yf_mock.assert_called_once()  # only the first call did any work
+    yf_mock.assert_not_called()
 
 
 def test_total_failure_returns_empty_and_source_none():
@@ -122,3 +121,53 @@ def test_total_failure_returns_empty_and_source_none():
 
     assert out == {}
     assert live_quotes.last_source() == live_quotes.SOURCE_NONE
+
+
+def test_mapped_equity_always_uses_upstox():
+    with _fake_upstox_module(["AAA.NS"], {"AAA.NS": 100.0}), \
+         patch("app.data.live_quotes._fetch_from_yfinance") as yf_mock:
+        out = live_quotes.fetch_live_prices(["AAA.NS"])
+
+    assert out == {"AAA.NS": 100.0}
+    assert live_quotes.last_source() == live_quotes.SOURCE_UPSTOX
+    yf_mock.assert_not_called()
+
+
+def test_mcx_gold_uses_upstox():
+    with _fake_upstox_module(["GOLD.MCX"], {"GOLD.MCX": 163_000.0}), \
+         patch("app.data.live_quotes._fetch_from_yfinance") as yf_mock:
+        yf_mock.return_value = {}
+        out = live_quotes.fetch_live_prices(["GOLD.MCX"])
+
+    assert out == {"GOLD.MCX": 163_000.0}
+    assert live_quotes.last_source() == live_quotes.SOURCE_UPSTOX
+    yf_mock.assert_not_called()
+
+
+def test_mcx_falls_back_to_cached_close_when_upstox_misses():
+    with _fake_upstox_module(["GOLD.MCX"], {}), \
+         patch("app.data.live_quotes._fetch_mcx_fallback") as mcx_mock:
+        mcx_mock.return_value = {"GOLD.MCX": 161_985.0}
+        out = live_quotes.fetch_live_prices(["GOLD.MCX"])
+
+    assert out == {"GOLD.MCX": 161_985.0}
+    assert live_quotes.last_source() == live_quotes.SOURCE_SNAPSHOT
+    mcx_mock.assert_called_once_with(["GOLD.MCX"])
+
+
+def test_upstox_mcx_quote_matches_colon_and_bare_token():
+    from app.data.upstox_client import _quotes_from_payload
+
+    payload = {
+        "data": {
+            "MCX_FO:563946": {
+                "instrument_token": "563946",
+                "last_price": 162010.0,
+                "ohlc": {"open": 160000, "high": 163000, "low": 159000, "close": 161000},
+                "volume": 10,
+            }
+        }
+    }
+    out = _quotes_from_payload(payload, {"MCX_FO|563946": "GOLD.MCX"})
+    assert "GOLD.MCX" in out
+    assert out["GOLD.MCX"].last_price == 162010.0

@@ -88,6 +88,7 @@ class PersistedSignal:
     target_1: Optional[float]
     persisted_rsi: Optional[float] = None
     persisted_regime: Optional[str] = None
+    direction: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +179,16 @@ def project_today_bar(
 # ---------------------------------------------------------------------------
 # Per-signal verification
 # ---------------------------------------------------------------------------
-def _signal_direction(category: str) -> str:
-    """`long` / `short` / `neutral` derived from category."""
+def _signal_direction(category: str, persisted_direction: Optional[str] = None) -> str:
+    """Prefer the persisted decision; category is only a legacy fallback."""
+    if persisted_direction:
+        mapped = persisted_direction.strip().upper()
+        if mapped == "LONG":
+            return "long"
+        if mapped == "SHORT":
+            return "short"
+        if mapped in {"WAIT", "NEUTRAL"}:
+            return "neutral"
     if category in _LONG_BIASED:
         return "long"
     if category in _SHORT_BIASED:
@@ -259,7 +268,7 @@ def verify_signal(
         4. WEAKENING otherwise (the thesis hasn't broken yet but the market
            isn't validating it either).
     """
-    direction = _signal_direction(persisted.category)
+    direction = _signal_direction(persisted.category, persisted.direction)
     notes: List[str] = []
     live_categories_set = set(live_categories)
 

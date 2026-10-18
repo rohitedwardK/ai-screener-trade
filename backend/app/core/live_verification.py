@@ -85,6 +85,7 @@ def _persisted_dto_from_signal(sig: Signal) -> lv.PersistedSignal:
         entry=_safe_float(sig.entry),
         stop_loss=_safe_float(sig.stop_loss),
         target_1=_safe_float(sig.target_1),
+        direction=str(sig.direction) if getattr(sig, "direction", None) else None,
     )
 
 
@@ -108,6 +109,7 @@ def _enrich_with_snapshot(
         target_1=persisted.target_1,
         persisted_rsi=rsi_val,
         persisted_regime=regime,
+        direction=persisted.direction,
     )
 
 
@@ -177,6 +179,13 @@ def _upsert_verification(
     else:
         for k, v in payload.items():
             setattr(existing, k, v)
+    signal = db.get(Signal, record.signal_id)
+    if signal is not None:
+        repo.archive_quality_observation(db, signal, {
+            "run_at": run_at.isoformat(), "status": record.status,
+            "live_close": record.live_close, "live_rsi": record.live_rsi,
+            "live_adx": record.live_adx, "score_delta": record.score_delta,
+        })
 
 
 def _purge_stale_verifications(

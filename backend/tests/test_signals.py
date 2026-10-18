@@ -36,6 +36,20 @@ def test_downtrend_flags_weak(downtrend_df):
     cats = {r.category for r in recs}
     assert "WEAK_AVOID" in cats
     assert "MOMENTUM_LEADER" not in cats
+    for rec in recs:
+        if rec.regime == "STRONG_DOWNTREND":
+            assert rec.direction != "LONG"
+            if rec.direction == "WAIT":
+                assert rec.plan is None
+
+
+def test_forced_strong_downtrend_never_emits_long(downtrend_df, monkeypatch):
+    from app.analysis import signals as sigmod
+
+    monkeypatch.setattr(sigmod, "classify", lambda df: ("STRONG_DOWNTREND", {}))
+    recs = evaluate_symbol("TEST.NS", downtrend_df)
+    assert all(r.direction != "LONG" for r in recs)
+    assert all(r.plan is None or r.direction == "SHORT" for r in recs)
 
 
 def test_signal_dict_serialisable(uptrend_df):
@@ -44,6 +58,7 @@ def test_signal_dict_serialisable(uptrend_df):
         return
     d = signal_to_dict(recs[0])
     assert d["symbol"] == "TEST.NS"
+    assert d["direction"] in {"LONG", "SHORT", "WAIT"}
     assert isinstance(d["reasons_json"], list)
     assert 0 <= d["confidence"] <= 1
     assert 0 <= d["score"] <= 100

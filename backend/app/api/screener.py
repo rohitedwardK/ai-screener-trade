@@ -9,12 +9,29 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..analysis.signals import CATEGORIES
+from ..core.commodity_universe import is_commodity_symbol
+from ..core import trade_quality
+from ..core.ma_crossovers import scan_ma20_crossings
 from ..data import repository as repo
 from ..db import get_db
 from ..models.orm import LiveSignalVerification
-from ..models.schemas import CategoryCount, LiveVerificationView, ScreenerRow
+from ..models.schemas import CategoryCount, LiveVerificationView, MA20WatchlistOut, ScreenerRow
 
 router = APIRouter(prefix="/screener", tags=["screener"])
+
+
+@router.get("/ma20-crossovers", response_model=MA20WatchlistOut)
+def ma20_crossovers(lookback: int = Query(3, ge=1, le=10)) -> dict:
+    """Recent daily-close crossings of SMA20 in either direction.
+
+    Uses completed daily bars only. Continuing requires a subsequent session,
+    closes holding beyond their contemporaneous SMA20, and the latest close
+    moving farther in the crossing direction versus both the cross close and
+    the previous close. Invalidation is a close back to/across the as-of SMA20.
+    Ordered by continuing status, relative volume, then recency. These are
+    observed technical conditions, not calibrated forecasts or trade orders.
+    """
+    return scan_ma20_crossings(lookback)
 
 
 def _live_view_for(verification: Optional[LiveSignalVerification]) -> Optional[LiveVerificationView]:
@@ -61,6 +78,11 @@ def _row_from_signal(
         invalidation=sig.invalidation,
         reasons=sig.reasons_json or [],
         live=_live_view_for(verification),
+        trade_quality=trade_quality.score_signal(sig, verification),
+        direction=getattr(sig, "direction", None),
+        expiry=getattr(sig, "expiry", None),
+        days_to_expiry=getattr(sig, "days_to_expiry", None),
+        horizon=getattr(sig, "horizon", None),
     )
 
 
@@ -118,6 +140,8 @@ def list_screener(
 
     rows: List[ScreenerRow] = []
     for s in sigs:
+        if is_commodity_symbol(s.symbol):
+            continue
         snap = repo.latest_snapshot(db, s.symbol)
         stock = repo.get_stock(db, s.symbol)
         if sector and (stock is None or stock.sector != sector):
@@ -150,6 +174,8 @@ def screener_categories(
     by_cat: dict[str, list] = defaultdict(list)
     verifications = _verifications_for(db, [int(s.id) for s in sigs])
     for s in sigs:
+        if is_commodity_symbol(s.symbol):
+            continue
         if not include_invalidated and _is_invalidated(verifications.get(int(s.id))):
             continue
         by_cat[s.category].append(s)

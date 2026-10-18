@@ -1,4 +1,4 @@
-"""AnalysisAgent — runs all four scoring methods and finds consensus picks.
+"""AnalysisAgent — runs Random Forest and the rule-based baseline and finds consensus picks.
 
 Backed by `tools.rank_methods_impl`, `tools.consensus_picks_impl`, and
 `tools.screener_signals_impl`. Returns a single dict the orchestrator

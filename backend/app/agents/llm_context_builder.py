@@ -22,11 +22,9 @@ What this guard protects against
 4. **Cost control.** Token-budget cap (`MAX_LLM_TOKENS`) hard-truncates
    payloads — better degraded summary than a $50/cycle bill.
 
-PR1 scope: type-strict skeleton + token guard + tests. Wiring the
-orchestrator's `_llm_prompt_for_payload` to consume `HeadAgentContext`
-exclusively is a follow-on in PR3 (where the pre-Consensus pipeline is
-finalised). Until then, the orchestrator's existing payload IS already
-structured-only — the builder formalises that contract.
+The orchestrator compacting path (`compact_briefing_payload`) is the only
+shape enqueued for BRIEFING tasks and the only JSON the head-agent prompt
+may contain.
 """
 from __future__ import annotations
 

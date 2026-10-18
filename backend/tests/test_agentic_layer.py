@@ -14,9 +14,57 @@ beyond the SQLite test DB.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+
+
+def test_context_llm_chooses_tools_and_keeps_existing_shape(monkeypatch):
+    import json
+
+    from app.agents import context_agent
+
+    calls = []
+    monkeypatch.setattr(context_agent, "vix_level_impl", lambda: {"value": 16.0, "band": "NORMAL"})
+    monkeypatch.setattr(context_agent, "market_regime_impl", lambda: {"regime": "RISK_ON"})
+    monkeypatch.setattr(context_agent, "market_trend_impl", lambda: {"trend": "UP"})
+    monkeypatch.setattr(context_agent, "sector_rotation_impl", lambda: [])
+    monkeypatch.setattr(context_agent, "news_headlines_impl", lambda limit: [{"title": str(limit)}])
+    actions = iter(("market_regime", "vix_level", "news_headlines", "finish"))
+
+    def fake_chat(prompt, **kwargs):
+        calls.append((json.loads(prompt), kwargs))
+        return json.dumps({"tool": next(actions)})
+
+    monkeypatch.setattr(context_agent.llm, "chat", fake_chat)
+    result = context_agent.run_llm(news_limit=3)
+    assert result == {
+        "vix": {"value": 16.0, "band": "NORMAL"},
+        "regime": {"regime": "RISK_ON"},
+        "trend": {},
+        "sectors": [],
+        "headlines": [{"title": "3"}],
+    }
+    assert all(0 < kwargs["timeout_sec"] <= 8 for _, kwargs in calls)
+    assert "market_regime" not in calls[1][0]["available_tools"]
+
+
+@pytest.mark.parametrize("actions", [
+    ("finish",),
+    ("vix_level", "vix_level"),
+    ("unknown_tool",),
+])
+def test_context_llm_rejects_invalid_actions(monkeypatch, actions):
+    import json
+
+    from app.agents import context_agent
+
+    monkeypatch.setattr(context_agent, "vix_level_impl", lambda: {"band": "NORMAL"})
+    responses = iter(actions)
+    monkeypatch.setattr(context_agent.llm, "chat", lambda *args, **kwargs: json.dumps({"tool": next(responses)}))
+    with pytest.raises(ValueError):
+        context_agent.run_llm()
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +169,46 @@ class _StubParsed:
 
 
 # ---------------------------------------------------------------------------
+# Shared method-analysis service boundary
+# ---------------------------------------------------------------------------
+def test_agent_and_api_live_movers_share_core_service(monkeypatch):
+    from app.agents import tools as agent_tools
+    from app.api import method_analysis as method_api
+    from app.core import method_analysis as method_service
+
+    payload = {
+        "movers": [
+            {
+                "rank": 1,
+                "symbol": "RELIANCE.NS",
+                "name": "Reliance",
+                "last_price": 2900.0,
+                "pct_change": 1.25,
+                "rvol": 1.4,
+                "score": 2.65,
+            }
+        ],
+        "source": "test",
+        "fetched_at": "2026-09-03T09:00:00+00:00",
+    }
+    calls = []
+
+    def fake_live_movers(k=15):
+        calls.append(k)
+        return payload
+
+    monkeypatch.setattr(method_service, "get_live_movers", fake_live_movers)
+
+    assert agent_tools.live_movers_impl(k=7) == payload
+    api_result = method_api.get_live_movers(k=7)
+
+    assert calls == [7, 7]
+    assert api_result.source == "test"
+    assert api_result.movers[0].symbol == "RELIANCE.NS"
+    assert api_result.movers[0].score == pytest.approx(2.65)
+
+
+# ---------------------------------------------------------------------------
 # Consensus stitcher
 # ---------------------------------------------------------------------------
 def test_consensus_picks_ranking_and_score():
@@ -136,10 +224,6 @@ def test_consensus_picks_ranking_and_score():
             {"symbol": "RELIANCE.NS", "confidence": 0.75, "direction": "LONG", "regime": "UPTREND", "close": 2900.0, "name": "Reliance"},
             {"symbol": "INFY.NS", "confidence": 0.65, "direction": "LONG", "regime": "UPTREND", "close": 1800.0, "name": "Infy"},
         ],
-        "gbm": [
-            {"symbol": "RELIANCE.NS", "confidence": 0.7, "direction": "LONG", "regime": "UPTREND", "close": 2900.0, "name": "Reliance"},
-        ],
-        "lstm": {"error": "model not trained"},
     }
 
     with patch.object(
@@ -151,15 +235,79 @@ def test_consensus_picks_ranking_and_score():
 
     assert [c["symbol"] for c in consensus[:2]] == ["RELIANCE.NS", "INFY.NS"]
     rel = consensus[0]
-    assert rel["vote_count"] == 3
-    assert sorted(rel["votes"]) == ["gbm", "rf", "rule_based"]
-    assert rel["mean_confidence"] == pytest.approx((0.8 + 0.75 + 0.7) / 3)
-    assert rel["score"] == pytest.approx(rel["mean_confidence"] * (3 / 4) * 100, rel=1e-3)
+    assert rel["vote_count"] == 2
+    assert sorted(rel["votes"]) == ["rf", "rule_based"]
+    assert rel["mean_confidence"] == pytest.approx(0.775)
+    assert rel["score"] == pytest.approx(77.5)
 
     infy = consensus[1]
     assert infy["vote_count"] == 2
-    assert "lstm" not in infy["votes"]
+    assert len(consensus) == 2
     assert infy["score"] < rel["score"]
+
+
+def test_consensus_ignores_wait_and_does_not_flip_to_short():
+    from app.agents import tools as tools_mod
+
+    fake_methods = {
+        "rule_based": [
+            {"symbol": "ITC.NS", "confidence": 1.0, "direction": "WAIT", "regime": "STRONG_DOWNTREND", "close": 400.0, "name": "ITC"},
+            {"symbol": "RELIANCE.NS", "confidence": 0.8, "direction": "LONG", "regime": "UPTREND", "close": 2900.0, "name": "Reliance"},
+        ],
+        "rf": [
+            {"symbol": "ITC.NS", "confidence": 0.72, "direction": "WAIT", "regime": "STRONG_DOWNTREND", "close": 400.0, "name": "ITC"},
+            {"symbol": "RELIANCE.NS", "confidence": 0.75, "direction": "LONG", "regime": "UPTREND", "close": 2900.0, "name": "Reliance"},
+        ],
+    }
+    with patch.object(
+        tools_mod,
+        "rank_methods_impl",
+        return_value={"methods": fake_methods, "ran_at": "now"},
+    ):
+        consensus = tools_mod.consensus_picks_impl(top_k=10, min_votes=2)
+
+    assert [c["symbol"] for c in consensus] == ["RELIANCE.NS"]
+    assert "ITC.NS" not in [c["symbol"] for c in consensus]
+
+
+@pytest.mark.parametrize("method", ["gbm", "lstm"])
+def test_hidden_methods_rejected_by_api(method):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.method_analysis import router
+
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        for action in ("train", "run"):
+            response = client.post(f"/method-analysis/{action}", params={"method": method})
+            assert response.status_code == 422
+        assert set(client.get("/method-analysis/status").json()) == {"rf", "rule_based"}
+
+
+def test_active_methods_and_weekly_training_use_only_rf(monkeypatch):
+    from app.agents import tools, scheduler_jobs
+    from app.analysis import ml_rf, ml_gbm, ml_lstm
+    from app.config import get_settings
+
+    def disabled(*args, **kwargs):
+        pytest.fail("Disabled model was invoked")
+
+    for module in (ml_gbm, ml_lstm):
+        monkeypatch.setattr(module, "train", disabled)
+        monkeypatch.setattr(module, "infer", disabled)
+        monkeypatch.setattr(module, "is_ready", disabled)
+    monkeypatch.setattr(ml_rf, "is_ready", lambda: True)
+    monkeypatch.setattr(tools, "_rule_based_cards", lambda top_k: [])
+    monkeypatch.setattr(tools, "_ml_cards", lambda infer_callable, top_k: [{"symbol": "TEST.NS"}])
+    methods = tools.rank_methods_impl()["methods"]
+    assert methods == {"rule_based": [], "rf": [{"symbol": "TEST.NS"}]}
+
+    calls = []
+    monkeypatch.setattr(get_settings(), "AGENTIC_ENABLED", True)
+    monkeypatch.setattr(ml_rf, "train", lambda: calls.append("rf"))
+    scheduler_jobs.run_weekly_retrain_job()
+    assert calls == ["rf"]
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +318,7 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
     from app.config import get_settings
 
     settings = get_settings()
+    monkeypatch.setattr(settings, "AGENTIC_ENABLED", True)
     db_path = tmp_path / "agentic_test.db"
     monkeypatch.setattr(settings, "DB_URL", f"sqlite:///{db_path}")
 
@@ -272,7 +421,7 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
     assert result.worker_statuses["analysis_agent"] == "OK"
     assert result.worker_statuses["context_agent"] == "OK"
     assert result.worker_statuses["informant_agent"] == "OK"
-    assert result.worker_statuses["head_agent"] == "PARTIAL"
+    assert result.worker_statuses["head_agent"] == "SKIPPED"
     assert result.disclaimer == DISCLAIMER
 
     # Informant output was stitched into both the briefing payload and the
@@ -286,7 +435,7 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
 
     # And confirm the briefing was persisted.
     from sqlalchemy import select
-    from app.models.agent_orm import AgentRun, DailyBriefing
+    from app.models.agent_orm import AITask, AgentRun, DailyBriefing
 
     with db_mod.session_scope() as db:
         runs = list(db.scalars(select(AgentRun)))
@@ -297,7 +446,55 @@ def test_run_deep_cycle_persists_briefing_with_llm_unavailable(monkeypatch, tmp_
         assert briefings[0].vix_band == "NORMAL"
         assert briefings[0].top_picks_json[0]["symbol"] == "RELIANCE.NS"
         assert len(briefings[0].upcoming_events_json or []) == 1
+        queued = list(db.scalars(select(AITask)))
+        assert len(queued) == 1
+        assert queued[0].task_type == "BRIEFING"
+        assert queued[0].status == "PENDING"
+        queued_payload = dict(queued[0].payload_json or {})
+        assert "method_outputs" not in queued_payload
+        assert "consensus_picks" not in queued_payload
+        assert queued_payload["top_picks"][0]["symbol"] == "RELIANCE.NS"
+
+    from app.agents import ai_tasks
+    ai_tasks.process_one()
+    with db_mod.session_scope() as db:
+        assert db.scalar(select(AITask)).status == "PENDING"
+
+    monkeypatch.setattr(llm_mod, "is_available", lambda: True)
+    monkeypatch.setattr(llm_mod, "chat", lambda *args, **kwargs: DISCLAIMER)
+    ai_tasks.process_one()
+    with db_mod.session_scope() as db:
+        assert db.scalar(select(AITask)).status == "COMPLETED"
+        assert db.scalar(select(AgentRun)).head_agent_status == "OK"
+        briefings = list(db.scalars(select(DailyBriefing).order_by(DailyBriefing.id)))
         assert briefings[0].upcoming_events_json[0]["title"] == "Earnings — Reliance"
+
+    from app.data import ai_task_repository as ai_queue
+    old_id = ai_queue.enqueue("MARKET_CONTEXT", "context:old", {"context": {}})
+    new_id = ai_queue.enqueue("MARKET_CONTEXT", "context:new", {"context": {}})
+    with db_mod.session_scope() as db:
+        assert db.get(AITask, old_id).status == "EXPIRED"
+        assert db.get(AITask, new_id).status == "PENDING"
+    claimed = ai_queue.claim_next()
+    assert claimed["id"] == new_id
+    with db_mod.session_scope() as db:
+        db.get(AITask, new_id).lease_until = datetime.utcnow() - timedelta(seconds=1)
+    recovered = ai_queue.claim_next()
+    assert recovered["id"] == new_id
+    assert recovered["attempts"] == 2
+    ai_queue.defer_offline(new_id)
+    with db_mod.session_scope() as db:
+        pending = db.get(AITask, new_id)
+        assert pending.status == "PENDING"
+        assert pending.attempts == 1
+    assert orchestrator._context_needs_review({
+        "regime": {"regime": "RISK_ON"}, "trend": {"trend": "DOWN"},
+        "vix": {"band": "NORMAL"},
+    })
+    assert not orchestrator._context_needs_review({
+        "regime": {"regime": "RISK_ON"}, "trend": {"trend": "UP"},
+        "vix": {"band": "NORMAL"},
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -373,3 +570,88 @@ def test_fast_tick_skips_when_recent_and_quiet(monkeypatch):
     assert result.note == "no triggers"
     # Suppress unused import warning — keeps the file self-contained.
     _ = time_mod
+
+
+def test_compact_briefing_payload_omits_method_outputs():
+    from app.agents.orchestrator import compact_briefing_payload, _llm_prompt_for_payload
+
+    payload = {
+        "regime": "NEUTRAL",
+        "market_trend": "Downtrend",
+        "vix_value": 11.61,
+        "vix_band": "NORMAL",
+        "top_picks": [],
+        "consensus_picks": [{"symbol": "SHOULD_NOT_LEAK.NS"}],
+        "method_outputs": {"rf": [{"symbol": "LEAK.NS", "confidence": 0.9}]},
+        "sector_rotation": [],
+        "news_headlines": [],
+        "upcoming_events": [],
+        "counters": {"consensus_total": 0},
+    }
+    compact = compact_briefing_payload(payload)
+    assert "method_outputs" not in compact
+    assert "consensus_picks" not in compact
+    blob = str(compact)
+    assert "LEAK.NS" not in blob
+    assert "SHOULD_NOT_LEAK" not in blob
+    prompt = _llm_prompt_for_payload(payload)
+    assert "method_outputs" not in prompt
+    assert "LEAK.NS" not in prompt
+    assert "SHOULD_NOT_LEAK" not in prompt
+
+
+def test_fallback_empty_picks_is_human():
+    from app.agents.orchestrator import _fallback_summary_md
+    from app.agents.tools import DISCLAIMER
+
+    md = _fallback_summary_md({
+        "regime": "NEUTRAL",
+        "market_trend": "Downtrend",
+        "vix_value": 11.61,
+        "vix_band": "NORMAL",
+        "top_picks": [],
+        "sector_rotation": [],
+        "news_headlines": [],
+        "upcoming_events": [],
+    })
+    assert "No symbol crossed the 2-method threshold this cycle" in md
+    assert "array of objects" not in md.lower()
+    assert "JSON object" not in md
+    assert "Neutral" in md
+    assert DISCLAIMER in md
+
+
+def test_briefing_text_is_usable_rejects_schema_dump():
+    from app.agents.orchestrator import briefing_text_is_usable
+
+    with_picks = {
+        "regime": "NEUTRAL",
+        "market_trend": "Downtrend",
+        "vix_value": 11.6,
+        "vix_band": "NORMAL",
+        "top_picks": [{"symbol": "RELIANCE.NS", "vote_count": 2, "score": 40}],
+        "sector_rotation": [],
+        "news_headlines": [],
+        "upcoming_events": [],
+    }
+    junk = (
+        "This is a JSON object that appears to be a stock market analysis report. "
+        "The Main Object is an array. Each stock analysis object contains properties: "
+        "symbol, name, confidence."
+    )
+    good = (
+        "## Market briefing\n**Market take.** Neutral regime, trend Downtrend.\n"
+        "**Consensus picks.**\n- **RELIANCE** — 2 methods; score 40.0\n\n"
+        "Research and decision-support only. Not financial advice."
+    )
+    empty = {
+        **with_picks,
+        "top_picks": [],
+    }
+    assert briefing_text_is_usable(junk, with_picks) is False
+    assert briefing_text_is_usable(good, with_picks) is True
+    assert briefing_text_is_usable("Just a take, no tickers mentioned.", with_picks) is False
+    assert briefing_text_is_usable(
+        "No symbol crossed the 2-method threshold this cycle.", empty
+    ) is True
+

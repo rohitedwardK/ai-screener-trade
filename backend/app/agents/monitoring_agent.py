@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import desc, select
@@ -23,6 +23,7 @@ from sqlalchemy import desc, select
 from ..config import get_settings
 from ..db import session_scope
 from ..models.agent_orm import DailyBriefing
+from ..models.notification_orm import Notification
 from .tools import (
     check_invalidations_impl,
     live_movers_impl,
@@ -79,6 +80,42 @@ def _latest_briefing_top_picks() -> List[Dict[str, Any]]:
         return []
 
 
+def _notify(event_type: str, symbol: str, title: str, message: str, severity: str = "INFO") -> None:
+    """Persist a deduplicated operator alert; never affects signal evaluation."""
+    try:
+        cutoff = datetime.utcnow() - timedelta(minutes=15)
+        with session_scope() as db:
+            exists = db.scalar(select(Notification).where(
+                Notification.event_type == event_type,
+                Notification.symbol == symbol,
+                Notification.created_at >= cutoff,
+            ).limit(1))
+            if exists is None:
+                db.add(Notification(symbol=symbol, title=title, message=message,
+                                    event_type=event_type, severity=severity,
+                                    route=f"/indices/{symbol}"))
+    except Exception:  # noqa: BLE001
+        log.exception("monitoring_agent: notification persistence failed")
+
+
+def _scan_index_opportunities() -> None:
+    from ..analysis.index_forecast import evaluate
+    from ..core.index_universe import all_index_symbols
+    from ..data import index_csv_store
+
+    for symbol in all_index_symbols():
+        forecast = evaluate(index_csv_store.load(symbol), index_csv_store.load(symbol, intraday=True))
+        if forecast.setup == "NO_TRADE" or forecast.confidence < 70:
+            continue
+        level = forecast.breakout_level if forecast.next_5m_bias == "UP" else forecast.breakdown_level
+        _notify(
+            "SCALP_OPPORTUNITY", symbol,
+            f"{symbol} {forecast.setup.replace('_', ' ').title()}",
+            f"{forecast.hourly_bias} hourly structure; 15-minute momentum is {forecast.fifteen_minute_bias.lower()}. Trigger {level:.2f}, invalidation {forecast.invalidation:.2f}.",
+            "WARNING",
+        )
+
+
 def run_fast_tick(*, trigger_deep_cycle_callback=None) -> FastTickResult:
     """Execute one 60-sec tick. Idempotent and exception-safe.
 
@@ -107,6 +144,11 @@ def run_fast_tick(*, trigger_deep_cycle_callback=None) -> FastTickResult:
     new_movers = [s for s in current_symbols if s not in prev]
     top_picks = _latest_briefing_top_picks()
     invalidations = check_invalidations_impl(top_picks)
+    for breach in invalidations:
+        symbol = str(breach.get("symbol") or "Market")
+        _notify("SETUP_INVALIDATED", symbol, f"{symbol} setup closed by invalidation",
+                str(breach.get("reason") or "Price crossed the published invalidation level."), "CRITICAL")
+    _scan_index_opportunities()
 
     # Refresh the live verifier opportunistically — it short-circuits outside
     # market hours and is bounded to ~1s when nothing has changed.

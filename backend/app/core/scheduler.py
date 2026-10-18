@@ -239,22 +239,29 @@ def start_scheduler() -> BackgroundScheduler | None:
             coalesce=True,
             max_instances=1,
         )
-        # Agentic fast monitor: every minute Mon-Fri 09-15 IST. Deterministic
+        # Agentic fast monitor: every minute. Deterministic
         # 60-sec body that wakes the deep cycle on triggers (invalidation
         # breach, new top mover, deep-cycle overdue). NOT an LLM call.
         sched.add_job(
             agent_jobs.run_fast_monitor_job,
-            trigger=CronTrigger(
-                day_of_week="mon-fri",
-                hour="9-15",
-                minute="*",
-            ),
+            trigger="interval",
+            minutes=1,
             id="agentic-fast-monitor",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
         )
-        # Weekly RF + GBM + LSTM refit so the operator never has to click
+        # Optional Ollama work is independent of market hours and worker cycles.
+        sched.add_job(
+            agent_jobs.run_ai_task_job,
+            trigger="interval",
+            minutes=1,
+            id="agentic-ai-tasks",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+        # Weekly Random Forest refit so the operator never has to click
         # Train. Sunday 22:00 IST keeps it well outside market hours.
         sched.add_job(
             agent_jobs.run_weekly_retrain_job,

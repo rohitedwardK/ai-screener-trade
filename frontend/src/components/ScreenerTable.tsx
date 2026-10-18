@@ -11,6 +11,7 @@ import type { LiveVerification, ScreenerRow } from "@/api/types";
 import {
   DEFAULT_QTY,
   openTradeForSymbol,
+  screenerPaperDirection,
   usePaperTrades,
 } from "@/lib/paperTrades";
 import { ArrowDown, ArrowUp, TrendingDown, TrendingUp } from "lucide-react";
@@ -19,6 +20,7 @@ type SortKey =
   | "symbol"
   | "score"
   | "confidence"
+  | "trade_quality"
   | "close"
   | "rsi"
   | "adx"
@@ -30,9 +32,11 @@ const HEADERS: { key: SortKey | null; label: string; align?: "right" }[] = [
   { key: null, label: "Sector" },
   { key: null, label: "Regime" },
   { key: null, label: "Category" },
+  { key: null, label: "Side" },
   { key: "live", label: "Live" },
   { key: "score", label: "Score", align: "right" },
   { key: "confidence", label: "Conf", align: "right" },
+  { key: "trade_quality", label: "Quality %", align: "right" },
   { key: "close", label: "Live / Run close", align: "right" },
   { key: "rsi", label: "RSI", align: "right" },
   { key: "adx", label: "ADX", align: "right" },
@@ -73,7 +77,13 @@ export function ScreenerTable({
     copy.sort((a, b) => {
       let av: number | string;
       let bv: number | string;
-      if (sortKey === "close") {
+      if (sortKey === "trade_quality") {
+        const aq = a.trade_quality?.quality_score;
+        const bq = b.trade_quality?.quality_score;
+        if (aq == null || bq == null) return aq == null ? (bq == null ? 0 : 1) : -1;
+        av = aq;
+        bv = bq;
+      } else if (sortKey === "close") {
         av = livePriceFor(a.symbol, a.close);
         bv = livePriceFor(b.symbol, b.close);
       } else if (sortKey === "live") {
@@ -166,6 +176,11 @@ export function ScreenerTable({
                   </Badge>
                 </td>
                 <td className="px-3 py-2">
+                  <Badge tone={r.direction === "LONG" ? "green" : r.direction === "SHORT" ? "red" : "muted"}>
+                    {r.direction ?? "WAIT"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">
                   <LiveStatusCell live={r.live} />
                 </td>
                 <td className="px-3 py-2 text-right">
@@ -173,6 +188,13 @@ export function ScreenerTable({
                 </td>
                 <td className="px-3 py-2 text-right num">
                   {fmt.num(r.confidence * 100, 0)}%
+                </td>
+                <td className="px-3 py-2 text-right num" title={r.trade_quality
+                  ? `${r.trade_quality.target}. As of ${r.trade_quality.as_of ?? "unknown"}. ${r.trade_quality.disclaimer}`
+                  : undefined}>
+                  {r.trade_quality?.quality_score != null
+                    ? `${fmt.num(r.trade_quality.quality_score, 1)}%`
+                    : <span className="text-xs text-fg-subtle">{(r.trade_quality?.status ?? "untrained").replace(/_/g, " ")}</span>}
                 </td>
                 <td className="px-3 py-2 text-right num">
                   <PriceCell row={r} live={livePrices?.[r.symbol]} />
@@ -186,6 +208,7 @@ export function ScreenerTable({
                       {fmt.inr(r.entry)} /{" "}
                       <span className="text-accent-red">{fmt.inr(r.stop_loss)}</span> /{" "}
                       <span className="text-accent-green">{fmt.inr(r.target_1)}</span>
+                      <span className="block text-fg-muted">Invalidation {fmt.inr(r.invalidation)}</span>
                     </span>
                   ) : (
                     "—"
@@ -239,7 +262,7 @@ function LiveStatusCell({ live }: { live: LiveVerification | null }) {
   );
 }
 
-function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
+export function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
   const trades = usePaperTrades((s) => s.trades);
   const buy = usePaperTrades((s) => s.buy);
   const sell = usePaperTrades((s) => s.sell);
@@ -247,9 +270,12 @@ function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
   const hasLive = live != null && Number.isFinite(live);
   const price = hasLive ? (live as number) : row.close;
   const open = openTradeForSymbol(trades, row.symbol);
+  const direction = screenerPaperDirection(row);
+  const optionLabel = direction === "LONG" ? "CE" : "PE";
 
   if (open) {
-    const pnl = (price - open.buyPrice) * open.quantity;
+    const move = price - open.buyPrice;
+    const pnl = (open.direction === "SHORT" ? -move : move) * open.quantity;
     const tone = pnl > 0 ? "text-accent-green" : pnl < 0 ? "text-accent-red" : "text-fg-muted";
     return (
       <div className="flex flex-col items-end gap-1">
@@ -257,16 +283,24 @@ function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
           type="button"
           onClick={() => sell(open.id, price)}
           className="inline-flex items-center gap-1 rounded-md border border-accent-red/40 bg-accent-red/10 px-2 py-1 text-xs font-medium text-accent-red hover:bg-accent-red/20"
-          title={`Sell ${open.quantity} @ ${fmt.inr(price)} (bought @ ${fmt.inr(open.buyPrice)})`}
+          title={`Close ${open.direction.toLowerCase()} ${open.quantity} @ ${fmt.inr(price)} (opened @ ${fmt.inr(open.buyPrice)})`}
         >
           <TrendingDown className="size-3" />
-          Sell {open.quantity}
+          Close {open.quantity}
         </button>
         <span className={`text-[10px] num ${tone}`}>
           {pnl >= 0 ? "+" : ""}
           {fmt.inr(pnl)}
         </span>
       </div>
+    );
+  }
+
+  if (direction === "WAIT") {
+    return (
+      <span className="text-[11px] uppercase tracking-wide text-fg-subtle" title="No trade — WAIT">
+        WAIT
+      </span>
     );
   }
 
@@ -284,14 +318,17 @@ function TradeActionCell({ row, live }: { row: ScreenerRow; live?: number }) {
           target1: row.target_1,
           target2: row.target_2,
           invalidation: row.invalidation,
+          direction,
           price,
         })
       }
-      className="inline-flex items-center gap-1 rounded-md border border-accent-green/40 bg-accent-green/10 px-2 py-1 text-xs font-medium text-accent-green hover:bg-accent-green/20"
-      title={`Buy ${DEFAULT_QTY} @ ${fmt.inr(price)} (paper trade)`}
+      className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${direction === "LONG"
+        ? "border-accent-green/40 bg-accent-green/10 text-accent-green hover:bg-accent-green/20"
+        : "border-accent-red/40 bg-accent-red/10 text-accent-red hover:bg-accent-red/20"}`}
+      title={`${optionLabel}: track ${fmt.num(DEFAULT_QTY, 0)} ${direction.toLowerCase()} @ ${fmt.inr(price)} (paper trade)`}
     >
-      <TrendingUp className="size-3" />
-      Buy {DEFAULT_QTY}
+      {direction === "LONG" ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
+      {optionLabel} {fmt.num(DEFAULT_QTY, 0)}
     </button>
   );
 }

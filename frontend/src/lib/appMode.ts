@@ -80,6 +80,10 @@ export const useAppMode = create<AppModeState>()(
     }),
     {
       name: STORAGE_KEY,
+      version: 1,
+      migrate: (persistedState, version) => {
+        return persistedState as any;
+      },
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ mode: state.mode }),
       onRehydrateStorage: () => (state) => {

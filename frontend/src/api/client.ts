@@ -1,17 +1,23 @@
 import axios from "axios";
 import type {
+  ResearchRequest,
+  ResearchResult,
   AgentStatusOut,
   AllMethodStatus,
   Candle,
   CategoryCount,
+  CommodityDashboard,
   ContractRecommendation,
   DailyBriefing,
+  DailyForecast,
   ExplainOut,
   FastTickOut,
   IndexCandle,
   IndexDetail,
   IndexInstrument,
   IndexRow,
+  IntradayCandle,
+  IntradayAnalysis,
   LiveVerificationRunResult,
   LiveVerificationSignalRow,
   LiveVerificationSummary,
@@ -33,6 +39,7 @@ import type {
   LiveObservation,
   LiveTickOut,
   LiveWeights,
+  NotificationItem,
 } from "./types";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -42,13 +49,56 @@ export const http = axios.create({
   timeout: 120_000,
 });
 
+export const notificationsApi = {
+  list: () => http.get<NotificationItem[]>("/v1/notifications").then((r) => r.data),
+  markRead: (id: number) => http.patch<NotificationItem>(`/v1/notifications/${id}`).then((r) => r.data),
+};
+
+export interface QualityTrainingStatus {
+  status: string;
+  message: string;
+  target: string;
+  disclaimer: string;
+  model: { samples: number; test_auc: number; test_brier: number; baseline_brier: number; usable: boolean; source?: string; limitations?: string; observation_dates?: number } | null;
+  data?: {
+    archive_observations: number; archive_dates: number; required_dates: number;
+    coverage: { symbol: string; rows: number; start: string | null; end: string | null; five_year_span: boolean; missing_values: number; duplicate_dates: number; stale: boolean }[];
+  };
+}
+
+export const qualityApi = {
+  status: () => http.get<QualityTrainingStatus>("/method-analysis/quality/status").then(r => r.data),
+  train: (source: "archive" | "historical") => http.post<QualityTrainingStatus>("/method-analysis/quality/train", null, { params: { source } }).then(r => r.data),
+};
+
 export const api = {
+  getDailyForecast: (symbol: string) =>
+    http.get<DailyForecast>(`/stocks/${encodeURIComponent(symbol)}/daily-forecast`).then((r) => r.data),
   listStocks: () => http.get<Stock[]>("/stocks").then((r) => r.data),
   getStock: (symbol: string) =>
-    http.get<StockDetail>(`/stocks/${symbol}`).then((r) => r.data),
+    http
+      .get<StockDetail>(`/stocks/${encodeURIComponent(symbol)}`)
+      .then((r) => r.data),
   getHistory: (symbol: string, range: string) =>
     http
-      .get<Candle[]>(`/stocks/${symbol}/history`, { params: { range } })
+      .get<Candle[]>(`/stocks/${encodeURIComponent(symbol)}/history`, {
+        params: { range },
+      })
+      .then((r) => r.data),
+
+  getIntradayAnalysis: (symbol: string, signalId?: number) =>
+    http
+      .get<IntradayAnalysis>(
+        `/stocks/${encodeURIComponent(symbol)}/intraday-analysis`,
+        { params: signalId ? { signal_id: signalId } : undefined },
+      )
+      .then((r) => r.data),
+
+  getIntradayHistory: (symbol: string, interval: "15m" | "30m" | "60m") =>
+    http
+      .get<IntradayCandle[]>(`/stocks/${encodeURIComponent(symbol)}/intraday-history`, {
+        params: { interval },
+      })
       .then((r) => r.data),
 
   listScreener: (params?: {
@@ -66,7 +116,9 @@ export const api = {
       .then((r) => r.data),
 
   explain: (symbol: string) =>
-    http.get<ExplainOut>(`/explain/${symbol}`).then((r) => r.data),
+    http
+      .get<ExplainOut>(`/explain/${encodeURIComponent(symbol)}`)
+      .then((r) => r.data),
 
   getPrices: (symbols: string[]) =>
     http
@@ -78,6 +130,11 @@ export const api = {
   refresh: () => http.post<RefreshResult>("/admin/refresh").then((r) => r.data),
   refreshAsync: () =>
     http.post<{ status: string }>("/admin/refresh-async").then((r) => r.data),
+};
+
+export const commoditiesApi = {
+  dashboard: () =>
+    http.get<CommodityDashboard>("/commodities/dashboard").then((r) => r.data),
 };
 
 // =====================================================
@@ -219,6 +276,10 @@ export const methodAnalysisApi = {
 const agentsBase = "/v1/agents";
 
 export const agentsApi = {
+  research: (request: ResearchRequest) =>
+    http.post<ResearchResult>(`${agentsBase}/research`, request).then((r) => r.data),
+  researchHistory: (asset_class: ResearchRequest["asset_class"], horizon: ResearchRequest["horizon"]) =>
+    http.get<ResearchResult[]>(`${agentsBase}/research/history`, { params: { asset_class, horizon } }).then((r) => r.data),
   status: () =>
     http.get<AgentStatusOut>(`${agentsBase}/status`).then((r) => r.data),
   briefing: () =>

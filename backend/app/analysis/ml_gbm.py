@@ -18,6 +18,7 @@ import pandas as pd
 from ..analysis.indicators import compute_all
 from ..analysis.patterns import detect_all
 from ..analysis.regime import REGIMES, classify
+from ..analysis.signal_decision import decide_from_rally_probability
 from ..data import csv_store
 
 log = logging.getLogger(__name__)
@@ -243,7 +244,7 @@ def infer(
         close_val = float(feat_df["_close"].iloc[0])
         regime = str(feat_df["_regime"].iloc[0])
         macd_hist = _sf(feat_df["macd_hist"].iloc[0]) or 0.0
-        direction = "LONG" if prob >= 0.5 else ("SHORT" if prob < 0.35 else "NEUTRAL")
+        direction, veto = decide_from_rally_probability(prob, regime)
 
         factor_map = {
             "rsi14": f"RSI {_sf(feat_df['rsi14'].iloc[0]):.0f}" if _sf(feat_df.get("rsi14", pd.Series([None])).iloc[0]) else "RSI",
@@ -258,6 +259,8 @@ def infer(
             "bb_width": f"BB width {_sf(feat_df['bb_width'].iloc[0]):.3f}" if _sf(feat_df["bb_width"].iloc[0]) else "BB width",
         }
         top_factors = [factor_map[f] for f in top_features if f in factor_map][:5]
+        if veto:
+            top_factors = [veto, *top_factors][:5]
 
         cards.append({
             "symbol": sym,

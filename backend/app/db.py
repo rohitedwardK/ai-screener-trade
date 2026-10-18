@@ -56,6 +56,7 @@ def init_db() -> None:
     from .models import agent_orm  # noqa: F401
     from .models import feature_orm  # noqa: F401
     from .models import event_orm  # noqa: F401
+    from .models import notification_orm  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _sync_sqlite_columns(Base)

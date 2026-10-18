@@ -7,11 +7,18 @@ from typing import List, Tuple
 
 from sqlalchemy.orm import Session
 
+from ..analysis import commodity_signals as commodity_sig
 from ..analysis import indicators as ind_mod
 from ..analysis.regime import classify
 from ..analysis.signals import evaluate_symbol, signal_to_dict
+from ..core.commodity_universe import (
+    COMMODITY_BY_SYMBOL,
+    all_commodity_symbols,
+    commodity_stock_meta,
+    is_commodity_symbol,
+)
 from ..core.universe import all_symbols, stock_meta
-from ..data import fetcher, repository as repo
+from ..data import fetcher, mcx as mcx_data, repository as repo
 from ..db import session_scope
 from ..models.schemas import RefreshResult
 
@@ -19,7 +26,7 @@ log = logging.getLogger(__name__)
 
 
 def _ensure_universe(db: Session) -> None:
-    repo.upsert_stocks(db, stock_meta())
+    repo.upsert_stocks(db, stock_meta() + commodity_stock_meta())
 
 
 def run_full_refresh(
@@ -42,7 +49,9 @@ def run_full_refresh(
     with session_scope() as db:
         _ensure_universe(db)
 
-    symbols = all_symbols()
+    # Same run_at for Nifty + commodities so `latest_signals` stays coherent;
+    # the screener API filters commodities out, the commodities API filters in.
+    symbols = all_symbols() + all_commodity_symbols()
     log.info("Starting refresh for %d symbols (force_full=%s)", len(symbols), force_full)
 
     try:
@@ -98,8 +107,20 @@ def run_full_refresh(
                     atr_pct=float(last_row.get("atr_pct")) if last_row.get("atr_pct") is not None else None,
                 )
 
-                for rec in evaluate_symbol(symbol, df, df_enriched=enriched):
-                    signals_payload.append(signal_to_dict(rec))
+                if is_commodity_symbol(symbol):
+                    meta = COMMODITY_BY_SYMBOL[symbol]
+                    eval_result = commodity_sig.evaluate_commodity_with_fallback(
+                        symbol,
+                        df,
+                        mcx_asset=meta.mcx_asset,
+                        monthly_expiry=mcx_data.contract_expiry_date(symbol),
+                        df_enriched=enriched,
+                    )
+                    for rec in eval_result.signals:
+                        signals_payload.append(commodity_sig.signal_to_dict(rec))
+                else:
+                    for rec in evaluate_symbol(symbol, df, df_enriched=enriched):
+                        signals_payload.append(signal_to_dict(rec))
             except Exception as exc:
                 log.exception("Pipeline failed for %s", symbol)
                 errors.append(f"{symbol}: {exc}")

@@ -188,32 +188,3 @@ def download_intraday_batch(
     return out
 
 
-def fetch_live_index_prices(symbols: List[str]) -> Dict[str, float]:
-    """Latest 1-minute close for each index symbol; falls back to empty on error."""
-    if not symbols:
-        return {}
-    result: Dict[str, float] = {}
-    try:
-        tickers_str = " ".join(symbols)
-        df = yf.download(
-            tickers_str,
-            period="1d",
-            interval="1m",
-            auto_adjust=True,
-            progress=False,
-            group_by="ticker",
-        )
-        if df is None or df.empty:
-            return result
-        for sym in symbols:
-            try:
-                if len(symbols) == 1:
-                    last = df["Close"].dropna().iloc[-1]
-                else:
-                    last = df[sym]["Close"].dropna().iloc[-1]
-                result[sym] = float(last)
-            except (KeyError, IndexError):
-                pass
-    except Exception:
-        log.warning("Live index price fetch failed", exc_info=True)
-    return result

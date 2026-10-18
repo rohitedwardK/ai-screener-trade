@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { ScreenerRow } from "@/api/types";
 
 /**
  * Client-side paper-trading ledger.
@@ -32,6 +33,8 @@ export interface PaperTrade {
   target1: number | null;
   target2: number | null;
   invalidation: number | null;
+  /** Directional thesis: LONG profits when price rises, SHORT when it falls. */
+  direction: "LONG" | "SHORT";
   quantity: number;
   buyPrice: number;
   buyAt: string; // ISO
@@ -53,6 +56,7 @@ interface BuyInput {
   target1?: number | null;
   target2?: number | null;
   invalidation?: number | null;
+  direction?: "LONG" | "SHORT";
   price: number;
   quantity?: number;
 }
@@ -80,6 +84,17 @@ function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function legacyDirection(category: string | null): "LONG" | "SHORT" {
+  const bearish = new Set([
+    "TREND_BREAKDOWN",
+    "BREAKDOWN_RETEST",
+    "RALLY_TO_RESISTANCE",
+    "WEAK_AVOID",
+    "OVERBOUGHT_AVOID",
+  ]);
+  return category && bearish.has(category.toUpperCase()) ? "SHORT" : "LONG";
+}
+
 export const usePaperTrades = create<PaperTradesState>()(
   persist(
     (set) => ({
@@ -102,6 +117,7 @@ export const usePaperTrades = create<PaperTradesState>()(
             target1: input.target1 ?? null,
             target2: input.target2 ?? null,
             invalidation: input.invalidation ?? null,
+            direction: input.direction ?? "LONG",
             quantity: input.quantity ?? DEFAULT_QTY,
             buyPrice: input.price,
             buyAt: new Date().toISOString(),
@@ -138,6 +154,19 @@ export const usePaperTrades = create<PaperTradesState>()(
     }),
     {
       name: STORAGE_KEY,
+      // Existing positions predate directional tracking and retain their
+      // original long behavior; newly opened signals persist their direction.
+      version: 2,
+      migrate: (persistedState) => {
+        const state = persistedState as Partial<PaperTradesState>;
+        return {
+          ...state,
+          trades: (state.trades ?? []).map((trade) => ({
+            ...trade,
+            direction: trade.direction ?? legacyDirection(trade.category),
+          })),
+        } as PaperTradesState;
+      },
       storage: createJSONStorage(() => localStorage),
     },
   ),
@@ -180,7 +209,8 @@ export function tradePnl(
 ): number | null {
   const exit = exitPrice(t, livePrice);
   if (exit == null) return null;
-  return (exit - t.buyPrice) * t.quantity;
+  const move = exit - t.buyPrice;
+  return (t.direction === "SHORT" ? -move : move) * t.quantity;
 }
 
 /** P&L as a percentage of the invested amount, or null. */
@@ -192,4 +222,18 @@ export function tradePnlPct(
   const cost = invested(t);
   if (pnl == null || cost <= 0) return null;
   return (pnl / cost) * 100;
+}
+
+/**
+ * Map a screener row to a paper-trade direction used by the frontend UI.
+ * Missing or WAIT/NEUTRAL rows are not trades.
+ */
+export function screenerPaperDirection(
+  row: ScreenerRow | { direction?: string | null },
+): "LONG" | "SHORT" | "WAIT" {
+  const dir = (row?.direction ?? "").toString().toUpperCase().trim();
+  if (!dir || dir === "WAIT" || dir === "NEUTRAL") return "WAIT";
+  if (dir.includes("CE") || dir.includes("CALL") || dir.includes("BUY") || dir === "LONG") return "LONG";
+  if (dir.includes("PE") || dir.includes("PUT") || dir.includes("SELL") || dir === "SHORT") return "SHORT";
+  return "WAIT";
 }

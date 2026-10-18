@@ -26,6 +26,7 @@ import pandas as pd
 import yfinance as yf
 
 from ..config import get_settings
+from ..core.commodity_universe import is_commodity_symbol
 from . import csv_store
 from .yf_client import pace
 
@@ -110,6 +111,11 @@ def fetch_or_update(
       - "noop"        : already up to date (today's data already cached)
       - "empty"       : remote returned no data; CSV unchanged
     """
+    if is_commodity_symbol(symbol):
+        from . import mcx as mcx_data
+
+        return mcx_data.fetch_or_update(symbol, force_full=force_full)
+
     # Full / first-time fetch: retry up to 3 times because we have no fallback.
     if force_full or csv_store.needs_full_refresh(symbol):
         new_df = _yf_history(symbol, period=period, interval=interval, max_retries=3)

@@ -24,6 +24,30 @@ Nifty / Sensex and an optional Upstox-backed Live Analysis mode.
 
 ## Features
 
+- **Research opportunities (Agents page).** Choose stocks or indices and a
+  swing/intraday horizon, then click **Research opportunities**. The agent
+  inspects cached candidates and selects up to three evidence-backed ideas.
+  Numerical levels remain deterministic, with mandatory invalidation and
+  directional level checks. Each saved run includes its tool history,
+  indicators, limitations, data timestamps, and dated briefing context.
+  Restart the backend once after updating to create the `research_runs` table.
+  This does not refresh market data; use the existing refresh controls first.
+  Stock swing and index swing/intraday research are supported. Stock intraday
+  and commodity research are withheld pending timestamped-cache and contract/
+  proxy validation respectively. Index ideas are spot-level research only.
+  Daily research uses completed bars no older than four calendar days;
+  intraday uses complete 15-minute groups from the 5-minute index cache,
+  with the last group ending no more than 30 minutes ago. These conservative
+  limits can abstain during market closures. Source labels identify the local
+  cache; upstream vendor provenance is not yet retained by this research flow.
+  Ollama uses the existing `AGENTIC_LLM_*` settings, with at most four actions
+  and an eight-second timeout per call. Disable **Agent investigation** for
+  deterministic ranking; unavailable/invalid model responses fall back with
+  an explicit label. Saved cards remain historical observations, not live
+  trigger confirmation. Endpoints: `POST /v1/agents/research` and
+  `GET /v1/agents/research/history` (schemas and limits in Swagger).
+  Research and decision-support only. Not financial advice.
+
 - **Daily refresh pipeline.** yfinance per-symbol fetch with **CSV cache +
   incremental updates** → SQLite → indicators → snapshots → signals.
 - **CSV-cached historical data.** 5y of daily OHLCV is fetched once and
@@ -420,3 +444,57 @@ ai-stock-screener/
 ├── render.yaml
 └── README.md
 ```
+# Trade-quality research scores
+
+The Screener's **Train quality model** action trains a local calibrated Random
+Forest using the selected source: recorded stock signals/live verification
+observations, or weekly EOD setups reconstructed from the five-year price caches.
+The Screener defaults to historical reconstruction; the API defaults to recorded
+observations for compatibility. The separate
+**Quality %** column estimates whether Target 1 will be touched before the stop
+or invalidation during the next five complete trading sessions after the
+observation date. It does not predict fills or net returns. If both levels are
+touched on one daily candle, the label is failure; if neither is touched within
+five sessions, the label is also failure. Incomplete horizons are excluded.
+
+Samples survive routine signal deletion. The first observation for each
+symbol/category/signal-date/observation-day and observation kind is retained;
+existing retained signals and latest verifications are imported at training time.
+Previously deleted history cannot be recovered. Daily indicators are recomputed
+on a timestamp-bounded CSV slice, with the current day's candle excluded from
+intraday verification features. Historical CSV revisions remain a data limitation.
+
+Historical reconstruction recomputes the rules and indicators on each date's
+price slice after indicator warmup, and labels only the next five complete
+sessions. It does not insert reconstructed examples into the live archive or
+invent historical verification states. Model metadata identifies the source.
+It uses today's configured universe, so survivorship bias remains; evaluation
+is not an index-wide point-in-time constituent backtest. Training replaces the
+current quality artifact only after fitting succeeds.
+
+The Screener shows per-stock cache date spans, row counts, stale/invalid-data
+checks, and the distinct dates in the recorded archive. Five years of prices
+does not mean five years of archived signal observations. The momentum research
+shortlist links current leaders to their daily forecast and price-history view;
+today's shortlist does not determine the historical training universe.
+
+Training requires at least 100 mature samples over 30 observation dates and five
+examples of each outcome in each partition. Dates are split 60/20/20 into train,
+sigmoid calibration and test, with crossing outcome windows purged. Holdout AUC,
+Brier score and base-rate Brier are shown beside training status. Scores remain
+unavailable unless holdout Brier improves on the training base-rate prediction.
+Historical samples, unsupported categories/statuses, stale observations and
+invalid plans receive no probability. Repeated retraining against the same test
+dates is not independent evidence of future performance.
+
+Swagger documents `POST /method-analysis/quality/train?source=archive|historical` and
+`GET /method-analysis/quality/status`; screener rows include `trade_quality`.
+The artifact is `backend/data/models/trade_quality_rf.pkl`. Method Analysis uses
+Random Forest alongside a rule-based baseline. Only Random Forest is enabled for
+ML inference and weekly retraining; GBM and LSTM controls and API methods are
+disabled. Their source modules and saved artifacts are retained for possible
+future use. The Random Forest method-comparison artifact retains its original
+five-session price-return label, separate from setup quality.
+Training is manual and does not place or manage trades.
+
+Research and decision-support only. Not financial advice.

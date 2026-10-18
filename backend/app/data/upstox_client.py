@@ -27,7 +27,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
 import httpx
@@ -121,10 +121,16 @@ class UpstoxQuote:
 def instrument_key_for(symbol: str) -> Optional[str]:
     """Return the Upstox instrument key for a yfinance-style symbol.
 
-    Returns None when the symbol is not in our hardcoded map. Callers should
-    treat None as "no Upstox data for this symbol" and fall back to yfinance.
+    Returns None when the symbol is not in our hardcoded map and is not a
+    resolvable MCX gold/silver front-month. Callers should treat None as
+    "no Upstox data for this symbol" and fall back to yfinance.
     """
-    return NIFTY50_INSTRUMENT_KEYS.get(symbol)
+    key = NIFTY50_INSTRUMENT_KEYS.get(symbol)
+    if key:
+        return key
+    from . import mcx as mcx_data
+
+    return mcx_data.instrument_key_for(symbol)
 
 
 def resolve_keys(symbols: Iterable[str]) -> Dict[str, str]:
@@ -300,6 +306,44 @@ def _request_quotes(
         return None
 
 
+def _normalise_instrument_key(key: object) -> str:
+    return str(key or "").replace(":", "|").strip()
+
+
+def _symbol_for_quote(
+    raw_key: object,
+    raw_q: dict,
+    sym_by_key: Dict[str, str],
+) -> Optional[str]:
+    """Match an Upstox quote row back to our requested symbol.
+
+    MCX payloads often echo `MCX_FO:563946`, a bare token, or
+    `instrument_key` instead of the `MCX_FO|563946` we sent.
+    """
+    candidates = [
+        raw_q.get("instrument_key"),
+        raw_q.get("instrument_token"),
+        raw_key,
+    ]
+    tails = {
+        _normalise_instrument_key(k).rsplit("|", 1)[-1]: s
+        for k, s in sym_by_key.items()
+    }
+    for c in candidates:
+        if not c:
+            continue
+        s = str(c)
+        if s in sym_by_key:
+            return sym_by_key[s]
+        n = _normalise_instrument_key(s)
+        if n in sym_by_key:
+            return sym_by_key[n]
+        tail = n.rsplit("|", 1)[-1]
+        if tail in tails:
+            return tails[tail]
+    return None
+
+
 def _quotes_from_payload(
     payload: dict,
     sym_by_key: Dict[str, str],
@@ -312,10 +356,7 @@ def _quotes_from_payload(
     for raw_key, raw_q in data.items():
         if not isinstance(raw_q, dict):
             continue
-        # Upstox sometimes returns the key in `instrument_token` form rather
-        # than the original `NSE_EQ|...` we sent. Try both lookups.
-        key = raw_q.get("instrument_token") or raw_key
-        sym = sym_by_key.get(key) or sym_by_key.get(raw_key)
+        sym = _symbol_for_quote(raw_key, raw_q, sym_by_key)
         if not sym:
             continue
         quote = _parse_quote(sym, raw_q)
@@ -400,3 +441,61 @@ def fetch_quotes_by_instrument_keys(
         if ltp > 0:
             out[str(key)] = ltp
     return out
+
+
+def fetch_historical_candles(
+    instrument_key: str,
+    *,
+    start: datetime | date,
+    end: datetime | date,
+    interval: str = "day",
+    timeout_s: float = 20.0,
+) -> List[list]:
+    """OHLC candles from Upstox History API. Empty list on any failure.
+
+    Day bars are capped by Upstox at about one year. Read-only.
+    """
+    token = get_settings().UPSTOX_ACCESS_TOKEN.strip()
+    if not token or _is_token_dead(token):
+        return []
+
+    def _ymd(d: datetime | date) -> str:
+        if isinstance(d, datetime):
+            return d.date().isoformat()
+        return d.isoformat()
+
+    from urllib.parse import quote
+
+    settings = get_settings()
+    key_enc = quote(instrument_key, safe="")
+    url = (
+        f"{settings.UPSTOX_BASE_URL.rstrip('/')}/historical-candle/"
+        f"{key_enc}/{interval}/{_ymd(end)}/{_ymd(start)}"
+    )
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Api-Version": "2.0",
+    }
+    _pace()
+    try:
+        resp = httpx.get(url, headers=headers, timeout=timeout_s)
+    except httpx.HTTPError as e:
+        log.warning("Upstox historical candles failed: %s", e)
+        return []
+    if resp.status_code == 401:
+        log.warning("Upstox historical candles 401 — token expired.")
+        _mark_token_dead(token)
+        return []
+    if resp.status_code != 200:
+        log.warning(
+            "Upstox historical candles HTTP %d: %s",
+            resp.status_code, resp.text[:200],
+        )
+        return []
+    try:
+        payload = resp.json()
+    except ValueError:
+        return []
+    candles = (payload.get("data") or {}).get("candles") or []
+    return candles if isinstance(candles, list) else []

@@ -137,9 +137,9 @@ def compute_all(df: pd.DataFrame) -> pd.DataFrame:
     out["pct_from_52w_high"] = (df["close"] / out["high_252"] - 1.0) * 100.0
     out["pct_from_52w_low"] = (df["close"] / out["low_252"] - 1.0) * 100.0
 
-    out["return_5d"] = df["close"].pct_change(5) * 100.0
-    out["return_20d"] = df["close"].pct_change(20) * 100.0
-    out["return_60d"] = df["close"].pct_change(60) * 100.0
+    out["return_5d"] = df["close"].pct_change(5, fill_method=None) * 100.0
+    out["return_20d"] = df["close"].pct_change(20, fill_method=None) * 100.0
+    out["return_60d"] = df["close"].pct_change(60, fill_method=None) * 100.0
 
     # Classical floor-trader pivots derived from the *previous* daily candle.
     # Vectorised so each row holds the levels valid for that trading day

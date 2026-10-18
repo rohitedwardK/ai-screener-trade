@@ -5,18 +5,18 @@ import { Loader2, RefreshCw, ScanLine, AlertTriangle } from "lucide-react";
 
 import { indicesApi } from "@/api/client";
 import { Badge } from "@/components/Badge";
+import { PriceChart } from "@/components/PriceChart";
 import { IndexCard } from "@/components/indices/IndexCard";
-import { OptionChainTable } from "@/components/indices/OptionChainTable";
 import { StrikeRecommendationsCard } from "@/components/indices/StrikeRecommendationsCard";
 import { fmt, regimeTone, scoreTone } from "@/lib/format";
 import {
   INDEX_CATEGORY_LABELS,
   INDEX_CATEGORY_TONE,
   OPTION_BIAS_TONE,
+  type Candle,
 } from "@/api/types";
 
 const PRICE_REFRESH_INTERVAL = 60_000;
-const OPTION_CHAIN_REFRESH = 60_000;
 
 export function IndexAnalysis() {
   const { symbol } = useParams<{ symbol?: string }>();
@@ -130,28 +130,26 @@ function IndexDetailView({ symbol }: { symbol: string }) {
     queryKey: ["index-detail", symbol],
     queryFn: () => indicesApi.detail(symbol),
   });
+  const history = useQuery({
+    queryKey: ["index-history", symbol, "5y"],
+    queryFn: () => indicesApi.history(symbol, "5y"),
+    enabled: Boolean(symbol),
+  });
+  const priceSymbol = detail.data?.instrument.symbol;
 
   const {
     data: priceMap,
     dataUpdatedAt: priceUpdatedAt,
     isFetching: isPriceFetching,
   } = useQuery({
-    queryKey: ["index-detail-price", symbol],
-    queryFn: () => indicesApi.prices([symbol]),
+    queryKey: ["index-detail-price", priceSymbol],
+    queryFn: () => indicesApi.prices([priceSymbol!]),
+    enabled: Boolean(priceSymbol),
     refetchInterval: PRICE_REFRESH_INTERVAL,
     refetchIntervalInBackground: true,
   });
 
-  const livePrice = priceMap?.[symbol];
-
-  const supportsChain = detail.data?.instrument.has_options ?? false;
-  const optionChain = useQuery({
-    queryKey: ["index-option-chain", symbol],
-    queryFn: () => indicesApi.optionChain(symbol),
-    enabled: supportsChain,
-    refetchInterval: OPTION_CHAIN_REFRESH,
-    refetchIntervalInBackground: false,
-  });
+  const livePrice = priceSymbol ? priceMap?.[priceSymbol] : undefined;
 
   const [priceCountdown, setPriceCountdown] = useState(
     PRICE_REFRESH_INTERVAL / 1000,
@@ -188,10 +186,18 @@ function IndexDetailView({ symbol }: { symbol: string }) {
     );
   }
 
-  const { instrument, snapshot, signals } = detail.data;
+  const { instrument, snapshot, signals, forecast } = detail.data;
   const indicators = snapshot?.indicators_json ?? {};
   const chainSummary =
     (snapshot?.option_chain_summary_json as Record<string, unknown>) ?? {};
+  const priceCandles: Candle[] = (history.data ?? []).map((c) => ({
+    date: c.date,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
 
   return (
     <div className="space-y-6">
@@ -216,9 +222,63 @@ function IndexDetailView({ symbol }: { symbol: string }) {
             <RefreshCw
               className={`size-3 ${isPriceFetching ? "animate-spin" : ""}`}
             />
-            Live refresh in {priceCountdown}s
+            {livePrice != null
+              ? `Live · refresh in ${priceCountdown}s`
+              : `Historical close · ${snapshot?.as_of_date ?? "unavailable"}`}
           </div>
         </div>
+      </section>
+
+      {forecast && (
+        <section className="card p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="font-semibold tracking-tight">Market forecast</h2>
+              <p className="text-xs text-fg-muted mt-1">Weekly context, hourly structure, key levels, and guarded short-term bias.</p>
+            </div>
+            <div className="flex gap-2">
+              <Badge tone={forecast.setup === "NO_TRADE" ? "muted" : forecast.next_5m_bias === "UP" ? "green" : "red"}>{forecast.setup.replace(/_/g, " ")}</Badge>
+              <Badge tone={forecast.confidence >= 70 ? "green" : forecast.confidence >= 55 ? "amber" : "muted"}>{fmt.num(forecast.confidence, 0)}% confidence</Badge>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <KV label="Weekly trend" value={forecast.weekly_bias} />
+            <KV label="Hourly trend" value={forecast.hourly_bias} />
+            <KV label="Short-term state" value={forecast.fifteen_minute_bias} />
+            <KV label="Next bias" value={forecast.next_5m_bias} />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <KV label="Entry trigger" value={fmt.num(forecast.entry, 2)} />
+            <KV label="Invalidation / stop" value={fmt.num(forecast.invalidation, 2)} />
+            <KV label="Target 1" value={fmt.num(forecast.target_1, 2)} />
+            <KV label="Target 2" value={fmt.num(forecast.target_2, 2)} />
+            <KV label="Breakout above" value={fmt.num(forecast.breakout_level, 2)} />
+            <KV label="Breakdown below" value={fmt.num(forecast.breakdown_level, 2)} />
+            <KV label="Break status" value={forecast.breakout_state.replace(/_/g, " ")} />
+            <KV label="Data as of" value={forecast.as_of ? new Date(forecast.as_of).toLocaleTimeString() : "—"} />
+          </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div className="rounded-lg bg-bg-elevated p-3">
+              <div className="text-[11px] uppercase text-fg-subtle mb-1">Why it thinks so</div>
+              <ul className="list-disc ml-4 text-xs text-fg-muted space-y-1">{forecast.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+            </div>
+            <div className="rounded-lg border border-accent-amber/30 bg-accent-amber/5 p-3">
+              <div className="text-[11px] uppercase text-accent-amber mb-1">Risk checks</div>
+              {forecast.cautions.length ? forecast.cautions.map((caution) => <p key={caution} className="text-xs text-fg-muted">{caution}</p>) : <p className="text-xs text-fg-muted">Setup still requires price to respect the invalidation level.</p>}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold tracking-tight">Daily price structure</h2>
+            <p className="text-xs text-fg-muted">Simple daily 5-year reference chart; use TradingView for drawing and execution charting.</p>
+          </div>
+          {history.isFetching && <Loader2 className="size-4 animate-spin text-fg-muted" />}
+        </div>
+        <PriceChart candles={priceCandles} />
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -456,17 +516,6 @@ function IndexDetailView({ symbol }: { symbol: string }) {
           }
           expiryLabel={signals[0].expiry}
         />
-      )}
-
-      {supportsChain && optionChain.data && (
-        <OptionChainTable chain={optionChain.data} />
-      )}
-      {supportsChain && optionChain.isError && (
-        <div className="card p-6 text-fg-muted flex items-start gap-2">
-          <AlertTriangle className="size-4 text-accent-amber mt-1" />
-          Option chain temporarily unavailable. NSE may be rate-limiting; retry in
-          a minute.
-        </div>
       )}
 
       <div className="card p-3 flex items-start gap-2 text-xs text-fg-muted">

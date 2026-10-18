@@ -83,6 +83,14 @@ export interface LiveVerificationSignalRow {
 }
 
 export interface ScreenerRow {
+  trade_quality?: {
+    status: string;
+    probability: number | null;
+    quality_score: number | null;
+    target: string;
+    as_of: string | null;
+    disclaimer: string;
+  } | null;
   symbol: string;
   name: string | null;
   sector: string | null;
@@ -101,12 +109,34 @@ export interface ScreenerRow {
   invalidation: number | null;
   reasons: string[];
   live: LiveVerification | null;
+  direction: string | null;
+  expiry: string | null;
+  days_to_expiry: number | null;
+  horizon: string | null;
 }
 
 export interface CategoryCount {
   category: string;
   count: number;
   top: ScreenerRow[];
+}
+
+export interface DailyForecast {
+  symbol: string;
+  as_of: string | null;
+  probability_up: number | null;
+  baseline_probability: number | null;
+  latest_features: Record<string, number>;
+  metrics: {
+    train_samples: number;
+    validation_samples: number;
+    test_samples: number;
+    test: { brier: number; accuracy_at_50: number };
+    test_baseline_brier: number;
+    calibration_bins: { count: number; mean_probability: number; observed_frequency: number }[];
+  } | null;
+  notes: string[];
+  disclaimer: string;
 }
 
 export interface Candle {
@@ -142,17 +172,76 @@ export interface Signal {
   target_2: number | null;
   invalidation: number | null;
   reasons_json: string[];
+  direction: string | null;
+  expiry?: string | null;
+  days_to_expiry?: number | null;
+  horizon?: string | null;
 }
 
 export interface StockDetail {
   stock: Stock;
   snapshot: Snapshot | null;
   signals: Signal[];
+  live_price?: number | null;
+  quote_source?: string | null;
+  contract_label?: string | null;
+  watch_notes?: string[];
+}
+
+export interface IntradayCandle {
+  ts: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface IntradayScalp {
+  category: string;
+  direction: string;
+  score: number;
+  entry: number;
+  stop_loss: number;
+  target_1: number;
+  target_2: number;
+  invalidation: number;
+  hold_minutes: number;
+  reasons: string[];
+}
+
+export interface IntradayAnalysis {
+  symbol: string;
+  interval: string;
+  source: string;
+  regime: string;
+  bars: IntradayCandle[];
+  support: number | null;
+  resistance: number | null;
+  vwap: number | null;
+  atr: number | null;
+  rsi: number | null;
+  patterns: string[];
+  scalps: IntradayScalp[];
+  signal_id: number | null;
+  signal_category: string | null;
+  signal_direction: string | null;
+  aligned_with_signal: boolean | null;
+  disclaimer: string;
+}
+
+export interface ExplainSections {
+  setup: string;
+  indicators: string;
+  rules: string[];
+  plan: string;
+  risks: string;
 }
 
 export interface ExplainOut {
   symbol: string;
   explanation: string;
+  sections: ExplainSections;
   disclaimer: string;
   invalidation_level: number | null;
   confidence: number;
@@ -167,6 +256,36 @@ export interface RefreshResult {
   errors: string[];
 }
 
+export interface CommodityItem {
+  symbol: string;
+  name: string;
+  venue: string;
+  currency: string;
+  unit: string;
+  close: number;
+  live_price: number | null;
+  quote_source: string;
+  regime: string;
+  rsi: number | null;
+  adx: number | null;
+  atr_pct: number | null;
+  as_of_date: string | null;
+  contract_label: string | null;
+  monthly_expiry: string | null;
+  days_to_expiry: number | null;
+  week_hold_days: number | null;
+  setup_horizon: "weekly" | "monthly" | "scalp" | "both" | null;
+  watch_notes: string[];
+  signals: ScreenerRow[];
+}
+
+export interface CommodityDashboard {
+  market_open: boolean;
+  quote_source: string;
+  items: CommodityItem[];
+  disclaimer: string;
+}
+
 export const CATEGORY_LABELS: Record<string, string> = {
   MOMENTUM_LEADER: "Momentum Leaders",
   FRESH_BREAKOUT: "Fresh Breakouts",
@@ -177,6 +296,12 @@ export const CATEGORY_LABELS: Record<string, string> = {
   HIGH_RISK: "High Risk",
   SWING_NEXT_WEEK: "Swing Trade Next Week",
   INTRADAY_WATCH_TOMORROW: "Intraday Watchlist Tomorrow",
+  TREND_CONTINUATION: "Trend Continuation",
+  BREAKOUT_RETEST: "Breakout Retest",
+  PULLBACK_TO_EMA: "Pullback to EMA",
+  TREND_BREAKDOWN: "Trend Breakdown",
+  BREAKDOWN_RETEST: "Breakdown Retest",
+  RALLY_TO_RESISTANCE: "Rally to Resistance",
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
@@ -189,6 +314,12 @@ export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   HIGH_RISK: "Volatility or volume issues - position size carefully",
   SWING_NEXT_WEEK: "Multi-day swing setup forming",
   INTRADAY_WATCH_TOMORROW: "Volume + range fit for intraday plays",
+  TREND_CONTINUATION: "Trend is up — buy CE",
+  BREAKOUT_RETEST: "Breakout hold — buy CE",
+  PULLBACK_TO_EMA: "Dip in an uptrend — buy CE on the pullback",
+  TREND_BREAKDOWN: "Trend is down — buy PE",
+  BREAKDOWN_RETEST: "Breakdown hold — buy PE",
+  RALLY_TO_RESISTANCE: "Bounce in a downtrend — buy PE into resistance",
 };
 
 export const CATEGORY_TONE: Record<string, "green" | "red" | "amber" | "blue" | "violet" | "cyan"> = {
@@ -201,6 +332,12 @@ export const CATEGORY_TONE: Record<string, "green" | "red" | "amber" | "blue" | 
   HIGH_RISK: "amber",
   SWING_NEXT_WEEK: "violet",
   INTRADAY_WATCH_TOMORROW: "cyan",
+  TREND_CONTINUATION: "green",
+  BREAKOUT_RETEST: "green",
+  PULLBACK_TO_EMA: "blue",
+  TREND_BREAKDOWN: "red",
+  BREAKDOWN_RETEST: "red",
+  RALLY_TO_RESISTANCE: "amber",
 };
 
 // =====================================================
@@ -334,6 +471,47 @@ export interface IndexDetail {
   instrument: IndexInstrument;
   snapshot: IndexSnapshot | null;
   signals: IndexSignal[];
+  forecast: IndexForecast | null;
+  forecast_chart: Record<string, IndexForecastChart>;
+}
+
+export interface IndexForecast {
+  weekly_bias: string;
+  hourly_bias: string;
+  fifteen_minute_bias: string;
+  next_5m_bias: string;
+  setup: string;
+  breakout_state: string;
+  breakout_level: number | null;
+  breakdown_level: number | null;
+  entry: number | null;
+  stop_loss: number | null;
+  target_1: number | null;
+  target_2: number | null;
+  invalidation: number | null;
+  confidence: number;
+  reasons: string[];
+  cautions: string[];
+  as_of: string | null;
+}
+
+export interface IndexForecastChart {
+  timeframe: string;
+  bars: IntradayCandle[];
+  support: number | null;
+  resistance: number | null;
+}
+
+export interface NotificationItem {
+  id: number;
+  created_at: string;
+  symbol: string | null;
+  title: string;
+  message: string;
+  event_type: string;
+  severity: string;
+  status: string;
+  route: string | null;
 }
 
 export interface IndexRow {
@@ -561,8 +739,8 @@ export interface LiveTickOut {
 
 // ─── Method Analysis (demo comparison page) ──────────────────────────────────
 
-export type MethodType = "rule_based" | "rf" | "gbm" | "lstm";
-export type TrainMethodType = "rf" | "gbm" | "lstm";
+export type MethodType = "rule_based" | "rf";
+export type TrainMethodType = "rf";
 export type TrainStatusState = "idle" | "training" | "ready" | "error";
 
 export interface MethodTrainStatus {
@@ -578,15 +756,13 @@ export interface MethodTrainStatus {
 export interface AllMethodStatus {
   rule_based: MethodTrainStatus;
   rf: MethodTrainStatus;
-  gbm: MethodTrainStatus;
-  lstm: MethodTrainStatus;
 }
 
 export interface MethodSignalCard {
   symbol: string;
   name: string | null;
   confidence: number;
-  direction: "LONG" | "SHORT" | "NEUTRAL";
+  direction: "LONG" | "SHORT" | "WAIT" | "NEUTRAL";
   category: string | null;
   regime: string;
   close: number;
@@ -627,6 +803,8 @@ export type AgentRunStatus =
   | "ERROR"
   | "SKIPPED";
 
+export type AgentJsonStatus = "VALID" | "INVALID" | "UNAVAILABLE" | "NOT_USED";
+
 export interface AgentRunRow {
   id: number;
   run_at: string;
@@ -634,6 +812,7 @@ export interface AgentRunRow {
   status: AgentRunStatus;
   head_agent_status: AgentRunStatus | null;
   worker_statuses: Record<string, AgentRunStatus>;
+  json_statuses: Record<string, AgentJsonStatus>;
   duration_s: number | null;
   triggered_by: string | null;
   error: string | null;
@@ -642,8 +821,25 @@ export interface AgentRunRow {
 export interface AgentStatusOut {
   deep_cycle_running: boolean;
   deep_cycle_pending: boolean;
+  pending_symbols: string[];
+  ollama_available: boolean;
+  ai_tasks_pending: number;
+  ai_tasks: AITaskRow[];
   last_runs: AgentRunRow[];
   last_deep_cycle_at: string | null;
+}
+
+export interface AITaskRow {
+  id: number;
+  task_type: "MARKET_CONTEXT" | "BRIEFING" | "RESEARCH";
+  status: "PENDING" | "RUNNING" | "RETRY_WAIT" | "COMPLETED" | "FAILED" | "EXPIRED";
+  created_at: string;
+  updated_at: string;
+  attempts: number;
+  error: string | null;
+  result: Record<string, unknown> | null;
+  briefing_id: number | null;
+  research_run_id: number | null;
 }
 
 export type VixBand = "NORMAL" | "ELEVATED" | "PANIC" | "UNKNOWN";
@@ -751,9 +947,50 @@ export const AGENT_STATUS_TONE: Record<AgentRunStatus, "green" | "amber" | "red"
 };
 
 export const AGENT_LABEL: Record<string, string> = {
-  data_agent: "Data Agent",
-  analysis_agent: "Analysis Agent",
-  context_agent: "Context Agent",
-  informant_agent: "Informant Agent",
-  head_agent: "Head Agent",
+  data_agent: "Data Worker",
+  analysis_agent: "Analysis Worker",
+  context_agent: "Context Inputs Worker",
+  informant_agent: "Informant Worker",
+  head_agent: "Briefing AI",
 };
+export interface ResearchRequest {
+  asset_class: "stock" | "index";
+  horizon: "swing" | "intraday";
+  use_llm: boolean;
+}
+
+export interface ResearchIdea {
+  id: string;
+  symbol: string;
+  category: string;
+  direction: "LONG" | "SHORT";
+  status: "WATCHING";
+  entry: number;
+  stop_loss: number;
+  target_1: number;
+  target_2: number;
+  invalidation: number;
+  score: number;
+  observed_at: string;
+  timeframe: string;
+  source: string;
+  data_quality: string;
+  thesis: string;
+  trigger: string;
+  evidence: string[];
+  counter_evidence: string[];
+  indicators: Record<string, number>;
+}
+
+export interface ResearchResult {
+  id: number | null;
+  asset_class: ResearchRequest["asset_class"];
+  horizon: ResearchRequest["horizon"];
+  run_at: string;
+  mode: "agent" | "deterministic" | "fallback";
+  ideas: ResearchIdea[];
+  warnings: string[];
+  trace: Record<string, unknown>[];
+  context: Record<string, unknown>;
+  disclaimer: string;
+}

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # the backend working directory) so local dev keeps working unchanged. In
     # cloud deploys point these at a persistent volume, e.g. /data/ohlcv.
     STOCK_DATA_DIR: str = "data/ohlcv"
+    STOCK_INTRADAY_DATA_DIR: str = "data/ohlcv-intraday"
     INDEX_DATA_DIR: str = "data/ohlcv-indices"
     INDEX_INTRADAY_DATA_DIR: str = "data/ohlcv-indices-intraday"
 

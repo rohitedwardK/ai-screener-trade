@@ -13,17 +13,20 @@ from .agents import scheduler_jobs as agent_jobs
 from .api import (
     admin,
     agents as agents_api,
+    commodities,
     explain,
     indices,
     live_analysis,
     live_verification,
     method_analysis,
+    notifications,
     screener,
     stocks,
 )
 from .config import get_settings
 from .core.scheduler import start_scheduler, stop_scheduler
 from .data import index_repository as idx_repo, repository as repo
+from .core.commodity_universe import commodity_stock_meta
 from .core.index_universe import index_meta
 from .core.universe import stock_meta
 from .db import init_db, session_scope
@@ -41,7 +44,7 @@ async def lifespan(app: FastAPI):
     log.info("Initialising database...")
     init_db()
     with session_scope() as db:
-        repo.upsert_stocks(db, stock_meta())
+        repo.upsert_stocks(db, stock_meta() + commodity_stock_meta())
         idx_repo.upsert_indices(db, index_meta())
     log.info("Starting scheduler...")
     start_scheduler()
@@ -81,12 +84,14 @@ def create_app() -> FastAPI:
 
     app.include_router(screener.router)
     app.include_router(stocks.router)
+    app.include_router(commodities.router)
     app.include_router(explain.router)
     app.include_router(admin.router)
     app.include_router(indices.router)
     app.include_router(live_analysis.router)
     app.include_router(live_verification.router)
     app.include_router(method_analysis.router)
+    app.include_router(notifications.router)
     app.include_router(agents_api.router)
 
     @app.get("/")

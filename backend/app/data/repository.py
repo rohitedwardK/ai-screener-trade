@@ -14,7 +14,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from ..models.orm import Candle, Signal, Snapshot, Stock
+from ..models.orm import Candle, Signal, Snapshot, Stock, QualityObservation
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +155,8 @@ def save_signals(db: Session, signals: List[dict]) -> int:
         return 0
     objs = [Signal(**s) for s in signals]
     db.add_all(objs)
+    for obj in objs:
+        archive_quality_observation(db, obj)
     db.commit()
     return len(objs)
 
@@ -200,3 +202,54 @@ def purge_old_signals(db: Session, keep_runs: int = 5) -> int:
     result = db.execute(delete(Signal).where(Signal.run_at < cutoff))
     db.commit()
     return result.rowcount or 0
+
+
+def quality_payload(signal: Signal, verification: Optional[dict] = None) -> dict:
+    fields = ("symbol", "category", "score", "confidence", "entry", "stop_loss",
+              "target_1", "invalidation", "direction")
+    return {
+        **{key: getattr(signal, key) for key in fields},
+        "as_of_date": signal.as_of_date.isoformat(),
+        "run_at": (signal.run_at or datetime.utcnow()).isoformat(),
+        "verification": verification,
+    }
+
+
+def archive_quality_observation(
+    db: Session, signal: Signal, verification: Optional[dict] = None,
+) -> None:
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    payload = quality_payload(signal, verification)
+    observed_at = datetime.fromisoformat(
+        verification["run_at"] if verification else payload["run_at"]
+    )
+    local_day = observed_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date()
+    kind = "verified" if verification else "signal"
+    # Keep the first observation per setup/day so frequent polls do not dominate training.
+    key = f"{signal.symbol}|{signal.as_of_date}|{signal.category}|{local_day}|{kind}"
+    stmt = sqlite_insert(QualityObservation).values(
+        sample_key=key, symbol=signal.symbol, observed_at=observed_at, payload=payload,
+    ).on_conflict_do_nothing(index_elements=[QualityObservation.sample_key])
+    db.execute(stmt)
+
+
+def backfill_quality_observations(db: Session) -> None:
+    from ..models.orm import LiveSignalVerification
+
+    signals = list(db.scalars(select(Signal)))
+    verifications = {v.signal_id: v for v in db.scalars(select(LiveSignalVerification))}
+    for signal in signals:
+        archive_quality_observation(db, signal)
+        v = verifications.get(signal.id)
+        if v is not None:
+            archive_quality_observation(db, signal, {
+                "run_at": v.run_at.isoformat(), "status": v.status,
+                "live_close": v.live_close, "live_rsi": v.live_rsi,
+                "live_adx": v.live_adx, "score_delta": v.score_delta,
+            })
+
+
+def quality_observations(db: Session) -> List[dict]:
+    return list(db.scalars(select(QualityObservation.payload).order_by(QualityObservation.observed_at)))

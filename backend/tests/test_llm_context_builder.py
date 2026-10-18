@@ -156,6 +156,8 @@ def test_serialize_under_budget_returns_full_payload():
     s = serialize_context(ctx, max_tokens=10_000)
     assert "RISK_ON" in s
     assert "X.NS" in s
+    assert "method_outputs" not in s
+    assert "consensus_picks" not in s
 
 
 def test_serialize_over_budget_trims_payload(monkeypatch):
